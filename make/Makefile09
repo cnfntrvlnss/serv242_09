@@ -1,0 +1,29 @@
+CC=gcc
+CCC=g++
+CXX=g++
+
+CND_PLATFORM=Intel-Linux-x86
+CONF=Debug
+CND_DISTDIR=dist09
+CND_BUILDDIR=build09
+OBJDIR=${CND_BUILDDIR}/${CONF}/${CND_PLATFORM}/
+DISTDIR := ${CND_DISTDIR}/${CONF}/${CND_PLATFORM}/
+MODE=Test
+TESTDIR=../test/ioacas/
+
+VPATH=../src/:../src/ioacas_dll/
+
+CPPNAMES:= audizcli_p.cpp globalfunc.cpp interface242.cpp log4z.cpp
+CPPNAMES +=
+CPPNAMES +=
+CPPNAMES+=
+CNAMES:= apueclient.c
+PROGNAME=libIOACAS.so
+LDLIBS +=
+LDFLAGS += -lpthread -shared
+CFLAGS +=
+ifneq (${CONF},Debug)
+	CFLAGS+= -O2 -Wall -fPIC
+else
+	CFLAGS+= -g -Wall -fPIC
+endif

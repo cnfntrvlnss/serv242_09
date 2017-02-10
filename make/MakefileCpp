@@ -1,0 +1,43 @@
+
+define expand_path
+$(foreach p,$(subst :, ,${VPATH}),$(wildcard $(addprefix $p,$(1))))
+endef
+
+CPPSRCS:=$(call expand_path,${CPPNAMES})
+CSRCS:=$(call expand_path,${CNAMES})
+$(info cpps: ${CPPSRCS})
+#$(info cs: ${CSRCS})
+OBJS=$(addprefix $(OBJDIR),$(notdir $(patsubst %.cc,%.o,$(filter %.cc,${CPPSRCS})) $(patsubst %.cpp,%.o,$(filter %.cpp,${CPPSRCS})) ${CSRCS:.c=.o}))
+PRQS:=$(OBJS:.o=.d)
+PROGRAM:=${DISTDIR}${PROGNAME}
+
+.PHONY: build
+build: ${PROGRAM}
+prebuild:
+	mkdir -p ${OBJDIR}
+	rm -f ${OBJDIR}*.d
+${PROGRAM}: ${OBJS}
+	mkdir -p ${DISTDIR}
+	${CCC} ${LDFLAGS} -o $@ $^ ${LDLIBS}
+ifeq (Test,${MODE})
+	cp -t ${TESTDIR} $@
+endif
+
+#$(info prqs: ${PRQS})
+include ${PRQS}
+${OBJS}:
+	$(CXX) -c $(CFLAGS) $(CPPFLAGS) $<  -o $@
+
+define getprq
+mkdir -p $(dir $@)
+$(CCC) -MM  $(CFLAGS) $< | sed 's,\($*\)\.o[ :]*,$(OBJDIR)\1.o $@ : ,g' > $@ 
+endef
+#set -e; rm -f $@; $(CC) -MM  $< > $@.$$$$; sed 's,\($*\)\.o[ :]*,$(OBJDIR)/\1.o $@ : ,g' < $@.$$$$ > $@;rm -f $@.$$$$
+
+$(OBJDIR)%.d: %.c
+	$(getprq)
+$(OBJDIR)%.d: %.cpp
+	$(getprq)
+$(OBJDIR)%.d: %.cc
+	$(getprq)
+
