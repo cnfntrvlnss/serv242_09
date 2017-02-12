@@ -8,6 +8,8 @@
 #ifndef _AUDIZSTRUCT_H
 #define _AUDIZSTRUCT_H
 
+#include <stdint.h>
+
 struct Audiz_WaveUnit{
     unsigned long m_iPCBID; //节目ID, 长度8字节
     unsigned int m_iDataLen;//数据字节长度
@@ -48,6 +50,32 @@ struct SpkMdlSt{
 #define AZOP_ADD_SAMPLEFILE (AZOP_START_MARK + 6)
 #define AZOP_QUERY_PROJ (AZOP_START_MARK + 8)
 #define AZOP_QUERY_SPACE (AZOP_START_MARK + 10)
-#define AZOP_WAIT_RESULT (AZOP_START_MARK + 12)
+//#define AZOP_WAIT_RESULT (AZOP_START_MARK + 12)
+#define APOP_REC_RESULT (AZOP_START_MARK + 13)
 
+#define CHARS_AS_INIT32(chs) *(reinterpret_cast<int32_t*>(chs))
+
+//used in p_client.
+struct Audiz_Result_Head{
+    int32_t type;
+    int32_t ack;
+    int getArgLen(){
+        if(type == ZPOP_QUERY_SAMPLE + 1){
+            if(ack > 0) return ack * 64;
+        }
+        else if(type == ZPOP_ADD_SAMPLE + 1){
+            return 0;
+        }
+        else if(type == ZPOP_DEL_SAMPLE + 1){
+            return 0;
+        }
+        else if(type == ZPOP_ADD_SAMPLEFILE + 1){
+            return 0;
+        }
+    }
+};
+//used in server.
+struct Audiz_PRequest_Head{
+    int32_t type;
+}
 #endif

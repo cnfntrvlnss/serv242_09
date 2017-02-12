@@ -104,11 +104,79 @@ void* maintainSession(void* param)
     }
 }
 
+pthread_mutex_t cfgCmdLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cfgCmdResultSetCond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cfgCmdTaskEmptyCond = PTHREAD_COND_INITIALIZER;
+vector<PckVec> cfgCmdTask;
+vector<PckVec> cfgCmdResult;
+/**
+ * the command commited to cfglink is pubulished in the shared space with cfglink,
+ * and wait for result in shared space for result with cfglink.
+ * attention: the base field in result element should be freed manually.
+ */
+int procCmdInCfgLink(std::vector<PckVec>& task, std::vector<PckVec>& result)
+{
+    pthread_mutex_lock(&cfgCmdLock);
+    while(cfgCmdTask.size() > 0){
+        pthread_cond_wait(&cfgCmdTaskEmptyCond, &cfgCmdLock);
+    }
+
+    cfgCmdTask.insert(cfgCmdTask.end(), task.begin(), task.end());
+    cfgCmdResult.clear();
+
+    while(cfgCmdResult.size() > 0){
+        pthread_cond_wait(&cfgCmdResultSetCond, &cfgCmdLock);
+    }
+    cfgCmdTask.clear();
+    result = cfgCmdResult;
+    cfgCmdResult.clear();
+    pthread_mutex_unlock(&cfgCmdLock);
+    pthread_cond_broadcast(&cfgCmdTaskEmptyCond);
+    return 0;
+}
+
+int procExecCfgCmd(int fd)
+{
+    pthread_mutex_lock(&cfgCmdLock);
+    if(cfgCmdTask.size() == 0){
+        pthread_mutex_unlock(&cfgCmdLock);
+    }
+    unsigned tolLen = 0;
+    for(size_t idx=0; idx < cfgCmdTask.size(); idx++){
+        tolLen += cfgCmdTask[idx].len;
+    }
+    int err;
+    char *resBuf = (char*)malloc(8);
+    vector<PckVec> vecResult;
+    vecResult.resize(2);
+    vecResult[0].base = &resBuf[0];
+    vecResult[0].len = 4;
+    vecResult[1].base = &resBuf[1];
+    vecResult[1].len = 4;
+    if(writen(fd, &cfgCmdTask[0], cfgCmdTask.size(), &err, 0) != tolLen){
+        BLOGE("procExecCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
+        CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
+        CHARS_AS_INIT32(vecResult[1].base) = -1;
+        //TODO in most cases, the link needs be closed.
+    }
+    else{
+        if(readn(fd, &vecResult[0], 2, &err, 0) != 12){
+            BLOGE("procExecCfgCmd error read result of cmd from cfg link. error: %s.", strerror(errno));
+            CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
+            CHARS_AS_INIT32(vecResult[1].base) = -1;
+            //TODO in most cases, the link needs be closed.
+        }
+        else{
+        }
+    }
+}
+
 void* maintainSession_ex(void* param)
 {
     SessionStruct *pss = (SessionStruct*) param;
     while(pss->getIsRun()){
-
+        //TODO check two links connected.
+        //TODO send request, receive response, 
     }
 }
 
@@ -133,9 +201,72 @@ static int getCfgLinkFd(const char* servAddr)
     pcks[1].len = 64;
     int err;
     if(writen(retfd, pcks, 2, &err, 0) != pcks[0].len + pcks[1].len){
-        
+        BLOGE("getCfgLinkFd failed to write the first packet to connection to unpath %s. error: %s.", servAddr, strerror(errno));
+        close(retfd);
+        return 0;
     }
+    char retLinkName[64];
+    unsigned long retsid;
+    char retData[64];
+    PckVec retPcks[3];
+    unsigned tolLen = 0;
+    retPcks[0].len = retPcks[1].len = retPcks[2].len = 64;
+    tolLen = 192;
+    if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
+        BLOGE("getCfgLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
+        close(retfd);
+        return 0;
+    }
+    if(strcmp(retLinkName, cfgLinkName) != 0 && retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
+        BLOGE("getCfgLinkFd modl link failed to follow audiz protocol.");
+        close(retfd);
+        return 0;
+    }
+    return retfd;
+}
 
+static int getDataLinkFd(const char* servAddr)
+{
+    int retfd;
+    char myPath[MAX_PATH];
+    snprintf(myPath, MAX_PATH, "%s%s", g_csWorkDir, "data");
+    retfd = cli_conn(myPath, servAddr); 
+    if(retfd <= 0){
+       BLOGE("getDataLinkFd failed to connect from %s to %s, error: %s.", myPath, servAddr, strerror(errno));
+       return retfd;
+    }
+    char cfgLinkName[64];
+    unsigned long procid = getpid();
+    snprintf(cfgLinkName, 64, "%s", AZ_DATALINKNAME);
+    PckVec pcks[2];
+    pcks[0].base = cfgLinkName;
+    pcks[0].len = 64;
+    pcks[1].base = reinterpret_cast<char*>(&procid);
+    pcks[1].len = 64;
+    int err;
+    if(writen(retfd, pcks, 2, &err, 0) != pcks[0].len + pcks[1].len){
+        BLOGE("getDataLinkFd failed to write the first packet to connection to unpath %s. error: %s.", servAddr, strerror(errno));
+        close(retfd);
+        return 0;
+    }
+    char retLinkName[64];
+    unsigned long retsid;
+    char retData[64];
+    PckVec retPcks[3];
+    unsigned tolLen = 0;
+    retPcks[0].len = retPcks[1].len = retPcks[2].len = 64;
+    tolLen = 192;
+    if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
+        BLOGE("getDataLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
+        close(retfd);
+        return 0;
+    }
+    if(strcmp(retLinkName, cfgLinkName) != 0 && retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
+        BLOGE("getDataLinkFd data link failed to follow audiz protocol.");
+        close(retfd);
+        return 0;
+    }
+    return retfd;
 }
 
 SessionStruct::SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFunc, AUDIZ_GETALLMDLSPROC getModlsFunc)

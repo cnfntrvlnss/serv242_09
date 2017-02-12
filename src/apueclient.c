@@ -11,9 +11,8 @@
 
 #define offsetof(type, field) ((unsigned long)&((type *) 0)->field)
 /**
- * do my best to hold the integrity of written data. write all data,
- * or write nothing if istry is not zero, otherwise fail for the link
- * is broken. the error status is returned through err.
+ * do my best to write all data, or write nothing if istry is not zero,
+ * the error status is returned through err.
  *return err: -1 if the link is broken, >0 means the count of trying.
  */
 size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
@@ -26,7 +25,7 @@ size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
     char *ptr;
     size_t nleft;
     unsigned trycnt = 0;
-    float stepsecs = 0.1;
+    float stepsecs = 0.000001;//wait for on usec if incompleted write happens.
     struct timeval timeout;
     for(idx =0; idx < cnt; idx++){
         ptr = vec[idx].base;
@@ -39,9 +38,9 @@ size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
                     if(istry > 0 && retn == 0){
                         break;   
                     }
-                    //timeout.tv_sec = 0;
-                    //timeout.tv_usec = stepsecs * 1000000;
-                    //select(0, NULL, NULL, NULL, &timeout);
+                    timeout.tv_sec = 0;
+                    timeout.tv_usec = stepsecs * 1000000;
+                    select(0, NULL, NULL, NULL, &timeout);
                     continue;
                 }
                 else{
@@ -87,7 +86,7 @@ size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
     char *ptr;
     struct timeval timeout;
     unsigned trycnt = 0;
-    float secs = 0.001;
+    float secs = 0.000001;
     for(idx = 0; idx < cnt; idx ++){
         nleft = vec[idx].len;
         ptr = vec[idx].base;
@@ -97,9 +96,9 @@ size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
                 if(curerr == EAGAIN){
                     if(trycnt != INT_MAX) trycnt ++;
                     if(istry > 0 && retn ==0) break;
-                    //timeout.tv_sec = 0;
-                    //timeout.tv_usec = secs * 1000000;
-                    //select(0, NULL, NULL, NULL, &timeout);
+                    timeout.tv_sec = 0;
+                    timeout.tv_usec = secs * 1000000;
+                    select(0, NULL, NULL, NULL, &timeout);
                     continue;
                 }
                 else{
