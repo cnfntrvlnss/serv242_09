@@ -108,34 +108,128 @@ pthread_mutex_t cfgCmdLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cfgCmdResultSetCond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t cfgCmdTaskEmptyCond = PTHREAD_COND_INITIALIZER;
 vector<PckVec> cfgCmdTask;
-vector<PckVec> cfgCmdResult;
+//vector<PckVec> cfgCmdResult;
+Audiz_Result_Head cfgCmdResult;
 /**
  * the command commited to cfglink is pubulished in the shared space with cfglink,
  * and wait for result in shared space for result with cfglink.
- * attention: the base field in result element should be freed manually.
+ * attention: result should be freed manually.
  */
-int procCmdInCfgLink(std::vector<PckVec>& task, std::vector<PckVec>& result)
+int procExecCommonCfgCmd(std::vector<PckVec>& task, Audiz_Result_Head result)
 {
     pthread_mutex_lock(&cfgCmdLock);
-    while(cfgCmdTask.size() > 0){
+    while(cfgCmdTask.size() == 0){
         pthread_cond_wait(&cfgCmdTaskEmptyCond, &cfgCmdLock);
     }
 
     cfgCmdTask.insert(cfgCmdTask.end(), task.begin(), task.end());
-    cfgCmdResult.clear();
+    cfgCmdResult.reset();
 
-    while(cfgCmdResult.size() > 0){
+    while(cfgCmdResult.type == 0){
         pthread_cond_wait(&cfgCmdResultSetCond, &cfgCmdLock);
     }
     cfgCmdTask.clear();
     result = cfgCmdResult;
-    cfgCmdResult.clear();
+    cfgCmdResult.reset();
     pthread_mutex_unlock(&cfgCmdLock);
     pthread_cond_broadcast(&cfgCmdTaskEmptyCond);
     return 0;
 }
 
-int procExecCfgCmd(int fd)
+/**
+ *
+ *
+ */
+//void prochandleRespForCfgCmd(int fd)
+int SessionStruct::prochandleResp()
+{
+    Audiz_Result_Head azres;
+    vector<PckVec> vecResult;
+    vecResult.resize(2);
+    vecResult[0].base = reinterpret_cast<char*>(&azres.type);
+    vecResult[0].len = 4;
+    vecResult[1].base = reinterpret_cast<char*>(&azres.ack);
+    vecResult[1].len = 4;
+    int restype = AZOP_INVALID_MARK;
+    pthread_mutex_lock(&cfgCmdLock);
+    if(cfgCmdTask.size() > 0){
+        restype = CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
+    }
+    else{
+        pthread_mutex_lock(&cfgCmdLock);
+    }
+    while(true){
+        int err;
+        unsigned retrn = readn(modlFd, &vecResult[0], 2, &err, 0);
+        if(retrn != 8){
+            BLOGE("SessionStruct::prochandleResp error read head of response of cmd from modl link. error: %s.", strerror(errno));
+            if(restype != AZOP_INVALID_MARK){
+                azres.type = restype;
+                azres.ack = -1;
+            }
+            closeModlLink();
+            break;
+        }
+        if(err > 0){
+            BLOGW("SessionStruct::prochandleResp have tried %u times to read response.", err);
+        }
+        if(!azres.isValid()){
+            BLOGE("SessionStruct::prochandleResp parse error packet, then close the link.");
+            if(restype != AZOP_INVALID_MARK){
+                azres.type = restype;
+                azres.ack = -1;
+            }
+            closeModlLink();
+            break;
+        }
+        unsigned arglen = azres.getArgLen();
+        if(arglen > 0){
+            PckVec argPck;
+            argPck.base = (char*)malloc(arglen);
+            argPck.len = arglen;
+            retrn = readn(modlFd, &argPck, 1, &err, 0);
+            if(retrn != arglen){
+                BLOGE("SessionStruct::prochandleResp error read arg part of response of cmd from modl link. error: %s.", strerror(errno));
+                if(restype != 0){
+                    azres.type = restype;
+                    azres.ack = -1;
+                }
+                //TODO in most cases, the link needs be closed here.
+                closeModlLink();
+                free(argPck.base);
+                break;
+            }
+            
+            if(azres.type == AZOP_REC_RESULT){
+                //TODO report result.
+                free(argPck.base);
+            }
+            else if(azres.type != restype){
+                free(argPck.base);
+            }
+        }
+        if(azres.type != AZOP_REC_RESULT && azres.type != restype){
+            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azres.type, azres.ack);
+        }
+        if(restype != AZOP_INVALID_MARK){
+            if(restype != azres.type){
+                 continue;      
+            }
+        }
+        break;
+    }
+    if(restype != AZOP_INVALID_MARK){
+        assert(azres.type == restype);    
+        cfgCmdResult = azres;
+        pthread_mutex_unlock(&cfgCmdLock);
+    }
+}
+
+/**
+ * send one cfgcmd to server, wait the response matching to the cfgcmd.
+ *
+ */
+ int SessionStruct::procSendCfgCmd()
 {
     pthread_mutex_lock(&cfgCmdLock);
     if(cfgCmdTask.size() == 0){
@@ -146,42 +240,23 @@ int procExecCfgCmd(int fd)
         tolLen += cfgCmdTask[idx].len;
     }
     int err;
-    char *resBuf = (char*)malloc(8);
     vector<PckVec> vecResult;
     vecResult.resize(2);
-    vecResult[0].base = &resBuf[0];
+    vecResult[0].base = reinterpret_cast<char*>(&cfgCmdResult.type);
     vecResult[0].len = 4;
-    vecResult[1].base = &resBuf[1];
+    vecResult[1].base = reinterpret_cast<char*>(&cfgCmdResult.type);
     vecResult[1].len = 4;
-    if(writen(fd, &cfgCmdTask[0], cfgCmdTask.size(), &err, 0) != tolLen){
+    if(writen(modlFd, &cfgCmdTask[0], cfgCmdTask.size(), &err, 0) != tolLen){
         BLOGE("procExecCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
         CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
         CHARS_AS_INIT32(vecResult[1].base) = -1;
-        //TODO in most cases, the link needs be closed.
+        //TODO in most cases, the link needs be closed here.
+        closeModlLink();
     }
-    else{
-        if(readn(fd, &vecResult[0], 2, &err, 0) != 12){
-            BLOGE("procExecCfgCmd error read result of cmd from cfg link. error: %s.", strerror(errno));
-            CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
-            CHARS_AS_INIT32(vecResult[1].base) = -1;
-            //TODO in most cases, the link needs be closed.
-        }
-        else{
-        }
-    }
+    pthread_mutex_unlock(&cfgCmdLock);
 }
 
-void* maintainSession_ex(void* param)
-{
-    SessionStruct *pss = (SessionStruct*) param;
-    while(pss->getIsRun()){
-        //TODO check two links connected.
-        //TODO send request, receive response, 
-    }
-}
-
-
-static int getCfgLinkFd(const char* servAddr)
+static int getModlLinkFd(const char* servAddr)
 {
     int retfd;
     char myPath[MAX_PATH];
@@ -268,6 +343,45 @@ static int getDataLinkFd(const char* servAddr)
     }
     return retfd;
 }
+
+bool SessionStruct::checkDataFd()
+{
+    if(dataFd == -1){
+        int fd = getDataLinkFd(servPath);
+        if(fd > 0) dataFd == fd;
+        else return false;
+    }
+    return true;
+}
+bool SessionStruct::checkModlFd()
+{
+    if(modlFd == -1){
+        int fd = getModlLinkFd(servPath);
+        if(fd > 0) modlFd = fd;
+        else return false;
+    }
+    return true;
+}
+/**
+ * use signal to interrupt poll.
+ *
+ */
+void* maintainSession_ex(void* param)
+{
+    //TODO setup signal mask. use sigint to anachronize with another thread.
+    SessionStruct *pss = (SessionStruct*) param;
+    pss->checkDataFd();
+    pss->checkModlFd();
+    while(pss->getIsRun()){
+        //TODO poll modlFd, continue to interact with server.
+        pss->prochandleResp();
+
+        pss->checkDataFd();
+        pss->checkModlFd();
+        pss->procSendCfgCmd();
+    }
+}
+
 
 SessionStruct::SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFunc, AUDIZ_GETALLMDLSPROC getModlsFunc)
 {
@@ -373,6 +487,7 @@ static int getModlFd(const char* servAddr)
     }
     return retfd;
 }
+
 static int getRessFd(const char* servAddr)
 {
     int retfd;
@@ -491,17 +606,25 @@ static void closeOneLink(int &curfd, pthread_mutex_t &curlock)
 
 void SessionStruct::closeDataLink()
 {
+    close(dataFd);
+    dataFd = -1;
+}
+/*{
     int& curfd = dataFd;
     pthread_mutex_t& curlock = fdsLock;
     closeOneLink(curfd, curlock);
-}
+}*/
 
 void SessionStruct::closeModlLink()
 {
+    close(modlFd);
+    modlFd = -1;
+}
+/*{
     int& curfd = modlFd;
     pthread_mutex_t& curlock = fdsLock;
     closeOneLink(curfd, curlock);
-}
+}*/
 const static unsigned DATAREDUNSIZE = 8;
 const static char dataRedunArr[DATAREDUNSIZE] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
 

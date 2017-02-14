@@ -43,7 +43,8 @@ struct SpkMdlSt{
 #define AZ_DATALINKNAME "data link"
 #define AZ_LINKBUILDOK "server ok"
 
-#define ZPOP_START_MARK 64
+#define AZOP_INVALID_MARK 0
+#define AZOP_START_MARK 64
 #define AZOP_QUERY_SAMPLE AZOP_START_MARK
 #define AZOP_ADD_SAMPLE (AZOP_START_MARK + 2)
 #define AZOP_DEL_SAMPLE (AZOP_START_MARK + 4)
@@ -51,7 +52,7 @@ struct SpkMdlSt{
 #define AZOP_QUERY_PROJ (AZOP_START_MARK + 8)
 #define AZOP_QUERY_SPACE (AZOP_START_MARK + 10)
 //#define AZOP_WAIT_RESULT (AZOP_START_MARK + 12)
-#define APOP_REC_RESULT (AZOP_START_MARK + 13)
+#define AZOP_REC_RESULT (AZOP_START_MARK + 13)
 
 #define CHARS_AS_INIT32(chs) *(reinterpret_cast<int32_t*>(chs))
 
@@ -59,23 +60,50 @@ struct SpkMdlSt{
 struct Audiz_Result_Head{
     int32_t type;
     int32_t ack;
+    char *argBuf;
+    
+    bool isValid(){
+        if(type == AZOP_QUERY_SAMPLE + 1){
+            return true;
+        }
+        else if(type == AZOP_ADD_SAMPLE + 1){
+            return true;
+        }
+        else if(type == AZOP_DEL_SAMPLE + 1){
+            return true;
+        }
+        else if(type == AZOP_ADD_SAMPLEFILE + 1){
+            return true;
+        }
+        else{
+            return false;
+        }
+
+    }
     int getArgLen(){
-        if(type == ZPOP_QUERY_SAMPLE + 1){
+        if(type == AZOP_QUERY_SAMPLE + 1){
             if(ack > 0) return ack * 64;
         }
-        else if(type == ZPOP_ADD_SAMPLE + 1){
+        else if(type == AZOP_ADD_SAMPLE + 1){
             return 0;
         }
-        else if(type == ZPOP_DEL_SAMPLE + 1){
+        else if(type == AZOP_DEL_SAMPLE + 1){
             return 0;
         }
-        else if(type == ZPOP_ADD_SAMPLEFILE + 1){
+        else if(type == AZOP_ADD_SAMPLEFILE + 1){
             return 0;
         }
     }
+    void reset(){
+        type = 0;
+        ack = 0;
+        argBuf = NULL;
+    }
+
 };
+
 //used in server.
 struct Audiz_PRequest_Head{
     int32_t type;
-}
+};
 #endif

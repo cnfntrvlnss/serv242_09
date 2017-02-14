@@ -34,7 +34,8 @@ public:
     bool writeData(unsigned long long id, char *buf, unsigned len);
     bool writeModl(const char *name, char *buf, unsigned len);
 
-    friend void* maintainSession(void* param);
+    //friend void* maintainSession(void* param);
+    friend void* maintainSession_ex(void* param);
     ////////////////data part//////////////////
 private:
     SessionStruct(const SessionStruct&);
@@ -50,11 +51,15 @@ private:
     }
     void closeDataLink();
     void closeModlLink();
+    bool checkModlFd()
+    bool checkDataFd()
     void setIsRun(bool val){
         pthread_mutex_lock(&isRunLock);
         isRunning = val;
         pthread_mutex_unlock(&isRunLock);
     }
+    int prochandleResp();
+    int procSendCfgCmd();
 
     /////////////////data part//////////////////
     char servPath[MAX_PATH];
@@ -65,8 +70,9 @@ private:
     AUDIZ_GETALLMDLSPROC retMdlsAddr;
     int dataFd;
     int modlFd;
-    int ressFd;
-    pthread_mutex_t fdsLock;
+    //int ressFd;
+    pthread_mutex_t dataFdLock;
+    pthread_mutex_t modlFdLock;
 };
 
 #endif 
