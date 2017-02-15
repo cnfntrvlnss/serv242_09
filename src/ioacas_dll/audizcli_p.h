@@ -11,7 +11,8 @@
 #include <climits>
 #include<iostream>
 #include<queue>
-using namespace std;
+#include <string>
+#include <vector>
 
 #include "../audizstruct.h"
 #define MAX_PATH 512
@@ -30,11 +31,13 @@ class SessionStruct{
 public:
     SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFunc, AUDIZ_GETALLMDLSPROC getModlsFunc);
     ~SessionStruct();
+    
+    bool writeData(Audiz_WaveUnit* unit);
+    bool writeSample(const char *name, char *buf, unsigned len);
+    bool deleteSample(const char *name);
+    bool queueSamples(std::vector<std::string> smps);
+    unsigned queueUnfinishedProjNum();
 
-    bool writeData(unsigned long long id, char *buf, unsigned len);
-    bool writeModl(const char *name, char *buf, unsigned len);
-
-    //friend void* maintainSession(void* param);
     friend void* maintainSession_ex(void* param);
     ////////////////data part//////////////////
 private:
@@ -51,8 +54,8 @@ private:
     }
     void closeDataLink();
     void closeModlLink();
-    bool checkModlFd()
-    bool checkDataFd()
+    bool checkModlFd();
+    bool checkDataFd();
     void setIsRun(bool val){
         pthread_mutex_lock(&isRunLock);
         isRunning = val;
@@ -60,19 +63,27 @@ private:
     }
     int prochandleResp();
     int procSendCfgCmd();
+    int procExecCommonCfgCmd(std::vector<std::string>& task, Audiz_PResult result);
 
     /////////////////data part//////////////////
     char servPath[MAX_PATH];
     bool isRunning;
     pthread_mutex_t isRunLock;
-    pthread_t tid4RepRes;
+    pthread_t modlThreadId;
     AUDIZ_REPORTRESULTPROC repResAddr;
     AUDIZ_GETALLMDLSPROC retMdlsAddr;
     int dataFd;
     int modlFd;
-    //int ressFd;
     pthread_mutex_t dataFdLock;
-    pthread_mutex_t modlFdLock;
+    //pthread_mutex_t modlFdLock;
+    //used to commit task to modl link.
+    pthread_mutex_t cfgCmdLock;
+    pthread_cond_t cfgCmdResultSetCond;
+    pthread_cond_t cfgCmdTaskEmptyCond;
+    std::vector<std::string> cfgCmdTask;
+    Audiz_PResult cfgCmdResult;
+    //used to send modl asanchronizely.
+    list<SpkMdlData> allmdls;
 };
 
 #endif 

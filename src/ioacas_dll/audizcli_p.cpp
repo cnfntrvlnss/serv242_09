@@ -38,90 +38,22 @@ enum BLOG_LEVEL{BLOGT, BLOGD, BLOGI, BLOGW, BLOGE};
 #endif
 
 static char g_csWorkDir[MAX_PATH] = "ioacas/";
-const char *chnlNames[3] = {
-    "PUT_DATA",
-    "PUT_SPKMDL",
-    "GET_RESULT"
-};
 
-//TODO why to do this? reconnect three sessions synchronously once one of them is broken.
-void* maintainSession(void* param)
-{
-    SessionStruct* pss = (SessionStruct*) param;
-    while(pss->getIsRun())
-    {
-        bool connected = pss->connectServRec();
-        if(!connected){
-            sleep(3);
-        }
-        struct pollfd fdarr[1];
-        pthread_mutex_lock(&pss->fdsLock);
-        fdarr[0].fd = pss->ressFd;
-        fdarr[0].events = POLLIN;
-        pthread_mutex_unlock(&pss->fdsLock);
-        int timeout = 1 * 1000;
-        int retpoll;
-        short errbits = POLLERR | POLLHUP | POLLNVAL;
-        while(pss->getIsRun())
-        {
-            bool needRecon = false;
-            pthread_mutex_lock(&pss->fdsLock);
-            needRecon = pss->dataFd == -1 || pss->modlFd == -1;
-            pthread_mutex_unlock(&pss->fdsLock);
-            if(needRecon) break;
-            retpoll = poll(fdarr, 1, timeout);
-            if(retpoll <= 0){
-                if(!pss->getIsRun()) break;
-                if(retpoll == 0){
-                    continue;
-                }
-                else{
-                   BLOGE("encounter errors while poll. error: %s\n", strerror(errno)); 
-                    break;
-                }
-            }
-            if(fdarr[0].revents & POLLIN){
-                Audiz_Result res;
-                int retread = read(fdarr[0].fd, &res, sizeof(res));
-                if(retread != sizeof(res)){
-                    if(retread == 0){
-                        BLOGE("maintainSession result session is closed.\n");
-                        break;
-                    }
-                    else{
-                        BLOGE("maintainSession read less data than result_struct, len: %u, expect len:%u.\n", retread, sizeof(res));
-                    }
-                }
-                pss->repResAddr(&res);
-            }
-            if(fdarr[0].revents & errbits){
-                BLOGE("the link is broken while polling.\n");
-                break;
-            }
-        }
-        pss->closeServRec();
-        sleep(3);//avoid reconnecting frequently.
-    }
-}
-
-pthread_mutex_t cfgCmdLock = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cfgCmdResultSetCond = PTHREAD_COND_INITIALIZER;
-pthread_cond_t cfgCmdTaskEmptyCond = PTHREAD_COND_INITIALIZER;
-vector<PckVec> cfgCmdTask;
-//vector<PckVec> cfgCmdResult;
-Audiz_Result_Head cfgCmdResult;
 /**
+ * execute command synchronizely.
+ *
  * the command commited to cfglink is pubulished in the shared space with cfglink,
  * and wait for result in shared space for result with cfglink.
  * attention: result should be freed manually.
  */
-int procExecCommonCfgCmd(std::vector<PckVec>& task, Audiz_Result_Head result)
+ int SessionStruct::procExecCommonCfgCmd(std::vector<std::string>& task, Audiz_PResult result)
 {
     pthread_mutex_lock(&cfgCmdLock);
-    while(cfgCmdTask.size() == 0){
+    while(cfgCmdTask.size() > 0){
         pthread_cond_wait(&cfgCmdTaskEmptyCond, &cfgCmdLock);
     }
 
+    //TODO string operation is alright for binary data?
     cfgCmdTask.insert(cfgCmdTask.end(), task.begin(), task.end());
     cfgCmdResult.reset();
 
@@ -136,93 +68,16 @@ int procExecCommonCfgCmd(std::vector<PckVec>& task, Audiz_Result_Head result)
     return 0;
 }
 
-/**
- *
- *
- */
-//void prochandleRespForCfgCmd(int fd)
-int SessionStruct::prochandleResp()
+size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
 {
-    Audiz_Result_Head azres;
-    vector<PckVec> vecResult;
-    vecResult.resize(2);
-    vecResult[0].base = reinterpret_cast<char*>(&azres.type);
-    vecResult[0].len = 4;
-    vecResult[1].base = reinterpret_cast<char*>(&azres.ack);
-    vecResult[1].len = 4;
-    int restype = AZOP_INVALID_MARK;
-    pthread_mutex_lock(&cfgCmdLock);
-    if(cfgCmdTask.size() > 0){
-        restype = CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
+    PckVec *tmpPcks = new PckVec[cnt];
+    for(unsigned idx=0; idx < cnt; idx ++){
+        tmpPcks[idx].len = vec[idx].size();
+        tmpPcks[idx].base = const_cast<char*>(vec[idx].c_str());
     }
-    else{
-        pthread_mutex_lock(&cfgCmdLock);
-    }
-    while(true){
-        int err;
-        unsigned retrn = readn(modlFd, &vecResult[0], 2, &err, 0);
-        if(retrn != 8){
-            BLOGE("SessionStruct::prochandleResp error read head of response of cmd from modl link. error: %s.", strerror(errno));
-            if(restype != AZOP_INVALID_MARK){
-                azres.type = restype;
-                azres.ack = -1;
-            }
-            closeModlLink();
-            break;
-        }
-        if(err > 0){
-            BLOGW("SessionStruct::prochandleResp have tried %u times to read response.", err);
-        }
-        if(!azres.isValid()){
-            BLOGE("SessionStruct::prochandleResp parse error packet, then close the link.");
-            if(restype != AZOP_INVALID_MARK){
-                azres.type = restype;
-                azres.ack = -1;
-            }
-            closeModlLink();
-            break;
-        }
-        unsigned arglen = azres.getArgLen();
-        if(arglen > 0){
-            PckVec argPck;
-            argPck.base = (char*)malloc(arglen);
-            argPck.len = arglen;
-            retrn = readn(modlFd, &argPck, 1, &err, 0);
-            if(retrn != arglen){
-                BLOGE("SessionStruct::prochandleResp error read arg part of response of cmd from modl link. error: %s.", strerror(errno));
-                if(restype != 0){
-                    azres.type = restype;
-                    azres.ack = -1;
-                }
-                //TODO in most cases, the link needs be closed here.
-                closeModlLink();
-                free(argPck.base);
-                break;
-            }
-            
-            if(azres.type == AZOP_REC_RESULT){
-                //TODO report result.
-                free(argPck.base);
-            }
-            else if(azres.type != restype){
-                free(argPck.base);
-            }
-        }
-        if(azres.type != AZOP_REC_RESULT && azres.type != restype){
-            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azres.type, azres.ack);
-        }
-        if(restype != AZOP_INVALID_MARK){
-            if(restype != azres.type){
-                 continue;      
-            }
-        }
-        break;
-    }
-    if(restype != AZOP_INVALID_MARK){
-        assert(azres.type == restype);    
-        cfgCmdResult = azres;
-        pthread_mutex_unlock(&cfgCmdLock);
-    }
+    size_t ret = writen(fd, tmpPcks, cnt, err, istry);
+    delete [] tmpPcks;
+    return ret;
 }
 
 /**
@@ -231,13 +86,14 @@ int SessionStruct::prochandleResp()
  */
  int SessionStruct::procSendCfgCmd()
 {
+    //TODO add commit command whose result is not cared.
     pthread_mutex_lock(&cfgCmdLock);
     if(cfgCmdTask.size() == 0){
         pthread_mutex_unlock(&cfgCmdLock);
     }
     unsigned tolLen = 0;
     for(size_t idx=0; idx < cfgCmdTask.size(); idx++){
-        tolLen += cfgCmdTask[idx].len;
+        tolLen += cfgCmdTask[idx].size();
     }
     int err;
     vector<PckVec> vecResult;
@@ -248,12 +104,103 @@ int SessionStruct::prochandleResp()
     vecResult[1].len = 4;
     if(writen(modlFd, &cfgCmdTask[0], cfgCmdTask.size(), &err, 0) != tolLen){
         BLOGE("procExecCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
-        CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(cfgCmdTask[0].base) + 1;
+        CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].c_str())) + 1;
         CHARS_AS_INIT32(vecResult[1].base) = -1;
         //TODO in most cases, the link needs be closed here.
         closeModlLink();
     }
     pthread_mutex_unlock(&cfgCmdLock);
+}
+
+/**
+ *
+ *
+ */
+int SessionStruct::prochandleResp()
+{
+    Audiz_PResult azres;
+    vector<PckVec> vecResult;
+    vecResult.resize(2);
+    vecResult[0].base = reinterpret_cast<char*>(&azres.type);
+    vecResult[0].len = 4;
+    vecResult[1].base = reinterpret_cast<char*>(&azres.ack);
+    vecResult[1].len = 4;
+    int restype = AZOP_INVALID_MARK;
+    pthread_mutex_lock(&cfgCmdLock);
+    if(cfgCmdTask.size() > 0){
+        restype = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].c_str())) + 1;
+    }
+    else{
+        pthread_mutex_lock(&cfgCmdLock);
+    }
+    int ret = 0;
+    while(true){
+        int err;
+        unsigned retrn = readn(modlFd, &vecResult[0], 2, &err, 0);
+        if(retrn != 8){
+            BLOGE("SessionStruct::prochandleResp error read head of response of cmd from modl link. error: %s.", strerror(errno));
+            ret = -1;
+            break;
+        }
+        if(err > 0){
+            BLOGW("SessionStruct::prochandleResp have tried %u times to read response.", err);
+        }
+        unsigned arglen = azres.getArgLen();
+        if(arglen > 0){
+            PckVec argPck;
+            argPck.base = (char*)malloc(arglen);
+            argPck.len = arglen;
+            retrn = readn(modlFd, &argPck, 1, &err, 0);
+            if(retrn != arglen){
+                BLOGE("SessionStruct::prochandleResp error read arg part of response of cmd from modl link. error: %s.", strerror(errno));
+                free(argPck.base);
+                ret = -1;
+                break;
+            }
+            
+            if(azres.type == AZOP_REC_RESULT){
+                unsigned reslen = arglen / sizeof(Audiz_Result);
+                Audiz_Result *ress = reinterpret_cast<Audiz_Result*>(argPck.base);
+                for(unsigned idx=0; idx < reslen; idx++){
+                    BLOGT("Project Result from modl. PID=%lu TargetID=%u.", ress[idx].m_Proj.m_iPCBID, ress[idx].m_iTargetID);
+                    repResAddr(&ress[idx]);
+                    
+                }
+                free(argPck.base);
+            }
+            else if(azres.type != restype){
+                free(argPck.base);
+            }
+        }
+        else if(arglen < 0){
+            BLOGE("SessionStruct::prochandleResp parse error packet, then close the link.");
+            ret = -1;
+            break;
+        }
+
+        if(azres.type != AZOP_REC_RESULT && azres.type != restype){
+            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azres.type, azres.ack);
+        }
+        if(restype != AZOP_INVALID_MARK){
+            if(restype != azres.type){
+                 continue;      
+            }
+        }
+        break;
+    }
+    if(ret == -1){
+        //in most cases, the link needs be closed here.
+        if(restype != AZOP_INVALID_MARK){
+            azres.type = restype;
+            azres.ack = -1;
+        }
+        closeModlLink();
+    }
+    if(restype != AZOP_INVALID_MARK){
+        assert(azres.type == restype);    
+        cfgCmdResult = azres;
+        pthread_mutex_unlock(&cfgCmdLock);
+    }
 }
 
 static int getModlLinkFd(const char* servAddr)
@@ -346,18 +293,24 @@ static int getDataLinkFd(const char* servAddr)
 
 bool SessionStruct::checkDataFd()
 {
+    pthread_mutex_lock(&dataFdLock);
     if(dataFd == -1){
         int fd = getDataLinkFd(servPath);
         if(fd > 0) dataFd == fd;
-        else return false;
     }
-    return true;
+    bool ret = true;
+    if(dataFd == -1) ret = false;
+    pthread_mutex_unlock(&dataFdLock);
+    return ret;
 }
 bool SessionStruct::checkModlFd()
 {
     if(modlFd == -1){
         int fd = getModlLinkFd(servPath);
-        if(fd > 0) modlFd = fd;
+        if(fd > 0){
+            //TODO send all mdls.
+             modlFd = fd;   
+        }
         else return false;
     }
     return true;
@@ -370,14 +323,34 @@ void* maintainSession_ex(void* param)
 {
     //TODO setup signal mask. use sigint to anachronize with another thread.
     SessionStruct *pss = (SessionStruct*) param;
-    pss->checkDataFd();
-    pss->checkModlFd();
-    while(pss->getIsRun()){
-        //TODO poll modlFd, continue to interact with server.
-        pss->prochandleResp();
+    struct pollfd fds[1];
 
-        pss->checkDataFd();
-        pss->checkModlFd();
+    while(pss->getIsRun()){
+        if(!pss->checkModlFd()){
+            continue;
+        }
+        fds[0].fd = pss->modlFd;
+        fds[0].events = POLLIN;
+        BLOGI("maintainSession_ex start waiting in modl file descriptor...");
+        int wmillisecs = 60 * 1000;
+        int retp = poll(fds, 1, wmillisecs);
+        if(retp > 0){
+            BLOGT("maintainSession_ex modl has data to read.");
+            pss->prochandleResp();
+        }
+        else if(retp < 0){
+            if(errno == EINTR){
+                BLOGW("maintainSession_ex interrupted by signal while polling in modl.");
+
+            }
+            else{
+                BLOGE("maintainSession_ex error occure while polling in modl. error: %s.", strerror(errno));
+            }
+        }
+        else if(retp == 0){
+            BLOGT("maintainSession_ex time out while polling modl for %d milliseconds.", wmillisecs);
+        }
+        
         pss->procSendCfgCmd();
     }
 }
@@ -394,13 +367,15 @@ SessionStruct::SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFun
         strncat(g_csWorkDir, tmpPath, MAX_PATH);
     }
     strncpy(this->servPath, servPath, MAX_PATH);
-    ressFd = -1;
     modlFd = -1;
     dataFd = -1;
     pthread_mutex_init(&isRunLock, NULL);
-    pthread_mutex_init(&fdsLock, NULL);
+    pthread_mutex_init(&dataFdLock, NULL);
+    pthread_mutex_init(&cfgCmdLock, NULL);
+    pthread_cond_init(&cfgCmdResultSetCond, NULL);
+    pthread_cond_init(&cfgCmdTaskEmptyCond, NULL);
     isRunning = true;
-    int readp = pthread_create(&tid4RepRes, NULL, maintainSession, this);
+    int readp = pthread_create(&modlThreadId, NULL, maintainSession_ex, this);
     if(readp < 0){
         BLOGE("SessionStruct::SessionStruct failed to create thread maintainSession.\n");
         exit(1);
@@ -410,114 +385,108 @@ SessionStruct::SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFun
 SessionStruct::~SessionStruct()
 {
     setIsRun(false);
-    pthread_join(tid4RepRes, NULL);
+    pthread_join(modlThreadId, NULL);
     pthread_mutex_destroy(&isRunLock);
-    pthread_mutex_destroy(&fdsLock);
+    pthread_mutex_destroy(&dataFdLock);
+    //pthread_mutex_destroy(&modlFdLock);
 }
 
 
-static int getfd(const char *srvpath, const char *myname, const  char *name)
+void SessionStruct::closeDataLink()
 {
-    int clifd;
-    clifd = cli_conn(myname, srvpath);
-    if(clifd <=0) {
-        BLOGE("failed to connect from %s to %s, err: %s.\n", myname, srvpath, strerror(errno));
-        return clifd;
-    }
-    PckVec pck;
-    pck.base = (char*)name;
-    pck.len = strlen(name);
-    int err;
-    if(writen(clifd, &pck, 1, &err, 0) != pck.len){
-        BLOGE("failt to write the first packet to connection to unpath %s\n", srvpath);
-        close(clifd);
-        return 0;
-    }
-    return clifd;
+    close(dataFd);
+    dataFd = -1;
+}
+void SessionStruct::closeModlLink()
+{
+    close(modlFd);
+    modlFd = -1;
 }
 
-static int getDataFd(const char* servAddr)
+//const static unsigned DATAREDUNSIZE = 8;
+//const static char dataRedunArr[DATAREDUNSIZE] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
+
+bool SessionStruct::writeData(Audiz_WaveUnit *unit)
 {
-    int retfd;
-    char tmpPath[MAX_PATH];
-    snprintf(tmpPath, MAX_PATH, "%s%s", g_csWorkDir, "data");
-    retfd = getfd(servAddr, tmpPath, chnlNames[0]);
-    if(retfd <= 0){
-        return retfd;
-    } 
-    const unsigned BufLen = 10;
-    char buf[BufLen];
-    int retr = read(retfd, buf, BufLen -1);
-    if(retr <=0){
-        BLOGE("failed to read data from new data session, then close it.\n");
-        close(retfd);
-        return 0;
+    if(!checkDataFd()){
+        return false;
     }
-    buf[retr] = '\0';
-    if(strcmp(buf, "READY") != 0){
-        BLOGE("unrecognized message from new data session, the link needs to close, msg: %s.\n", buf);
-        close(retfd);
-        return 0;
+    vector<AZ_PckVec> pcks;
+    Audiz_Wave_OnWire::serialize(*unit, pcks);
+    bool bret = false;
+    pthread_mutex_lock(&dataFdLock);
+    int fd = dataFd;
+    //if(fd == -1){
+    //    BLOGE("data link is not established.");
+    //    pthread_mutex_unlock(&dataFdLock);
+    //    return bret;
+    //}
+
+    bret = true;
+    int cls = 0;
+    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), 4, &cls, 0);
+    if(cls != 0){
+        if(cls == -1){
+            closeDataLink();
+            bret = false;
+        }
+        else {
+            BLOGE("data link becomes congested, try count: %d", cls);       
+        }
     }
-    return retfd;
+
+    pthread_mutex_unlock(&dataFdLock);
+    return bret;
 }
 
-static int getModlFd(const char* servAddr)
+bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
 {
-    int retfd;
-    char tmpPath[MAX_PATH];
-    snprintf(tmpPath, MAX_PATH, "%s%s", g_csWorkDir, "modl");
-    retfd = getfd(servAddr, tmpPath, chnlNames[1]);
-    if(retfd <= 0){
-        return retfd;
-    } 
-    const unsigned BufLen = 10;
-    char buf[BufLen];
-    int retr = read(retfd, buf, BufLen -1);
-    if(retr <=0){
-        BLOGE("failed to read data from new modl session, then close it.\n");
-        close(retfd);
-        return 0;
-    }
-    buf[retr] = '\0';
-    if(strcmp(buf, "READY") != 0){
-        BLOGE("unrecognized message from new modl session, the link needs to close, expected: 'READY'; received: %s.\n", buf);
-        close(retfd);
-        return 0;
-    }
-    return retfd;
-}
 
-static int getRessFd(const char* servAddr)
+}
+bool SessionStruct::deleteSample(const char *name);
+bool SessionStruct::queueSamples(std::vector<std::string> smps);
+unsigned SessionStruct::queueUnfinishedProjNum();
+
+/*
+bool SessionStruct::writeModl(const char* strHd, char *buf, unsigned len)
 {
-    int retfd;
-    char tmpPath[MAX_PATH];
-    snprintf(tmpPath, MAX_PATH, "%s%s", g_csWorkDir, "ress");
-    retfd = getfd(servAddr, tmpPath, chnlNames[2]);
-    if(retfd <= 0){
-        return retfd;
-    } 
-    const unsigned BufLen = 10;
-    char buf[BufLen];
-    int retr = read(retfd, buf, BufLen -1);
-    if(retr <=0){
-        BLOGE("failed to read data from new ress session, then close it.\n");
-        close(retfd);
-        return 0;
+    bool ret = false;
+    PckVec pcks[3];
+    static char pckhd[SPKMDL_HDLEN];
+    const unsigned pckhdlen = SPKMDL_HDLEN;
+    memset(pckhd, 0, pckhdlen);
+    strncpy(pckhd, strHd, pckhdlen);
+    pcks[0].base = pckhd;
+    pcks[0].len = pckhdlen;
+    pcks[1].base = (char*)&len;
+    pcks[1].len = sizeof(len);
+    pcks[2].base = buf;
+    pcks[2].len = len;
+    pthread_mutex_lock(&fdsLock);
+    int mdlfd = this->modlFd;
+    pthread_mutex_unlock(&fdsLock);
+
+    if(mdlfd){
+        BLOGE("no client being connected to consume the data.\n");
+        return ret;
     }
-    buf[retr] = '\0';
-    if(strcmp(buf, "YES") != 0){
-        BLOGE("unrecognized message from new ress session, the link needs to close, expected: 'YES'; received: %s.\n", buf);
-        close(retfd);
-        return 0;
+    int cls = 0;
+    writen(mdlfd, pcks, 3, &cls, 0);
+    if(cls !=0){
+        if(cls == -1){
+            BLOGE("the modl link is broken, then needs to be closed.\n");
+            closeModlLink();
+        }
+        else {
+            BLOGE("the modl link becomes congesting, try count: %d\n", cls);       
+            ret =true;
+        }
     }
-    int retw = write(retfd, "READY", 5);
-    if(retw != 5){
-        BLOGE("failed to write data to new ress session, then close it.\n");
-        close(retfd);
-        return 0;
+    else{
+        ret = true;
     }
-    return retfd;
+
+    return ret;
 }
 
 bool SessionStruct::connectServRec()
@@ -606,32 +575,155 @@ static void closeOneLink(int &curfd, pthread_mutex_t &curlock)
 
 void SessionStruct::closeDataLink()
 {
-    close(dataFd);
-    dataFd = -1;
-}
-/*{
     int& curfd = dataFd;
     pthread_mutex_t& curlock = fdsLock;
     closeOneLink(curfd, curlock);
-}*/
+}
 
 void SessionStruct::closeModlLink()
 {
-    close(modlFd);
-    modlFd = -1;
-}
-/*{
     int& curfd = modlFd;
     pthread_mutex_t& curlock = fdsLock;
     closeOneLink(curfd, curlock);
-}*/
-const static unsigned DATAREDUNSIZE = 8;
-const static char dataRedunArr[DATAREDUNSIZE] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
+}
 
-/**
- * 写数据，或全部写成功，否则关闭连接。
- * return 1 if success(at lest having send one dest).
- */
+static int getfd(const char *srvpath, const char *myname, const  char *name)
+{
+    int clifd;
+    clifd = cli_conn(myname, srvpath);
+    if(clifd <=0) {
+        BLOGE("failed to connect from %s to %s, err: %s.\n", myname, srvpath, strerror(errno));
+        return clifd;
+    }
+    PckVec pck;
+    pck.base = (char*)name;
+    pck.len = strlen(name);
+    int err;
+    if(writen(clifd, &pck, 1, &err, 0) != pck.len){
+        BLOGE("failt to write the first packet to connection to unpath %s\n", srvpath);
+        close(clifd);
+        return 0;
+    }
+    return clifd;
+}
+
+static int getDataFd(const char* servAddr)
+{
+    int retfd;
+    char tmpPath[MAX_PATH];
+    snprintf(tmpPath, MAX_PATH, "%s%s", g_csWorkDir, "data");
+    retfd = getfd(servAddr, tmpPath, chnlNames[0]);
+    if(retfd <= 0){
+        return retfd;
+    } 
+    const unsigned BufLen = 10;
+    char buf[BufLen];
+    int retr = read(retfd, buf, BufLen -1);
+    if(retr <=0){
+        BLOGE("failed to read data from new data session, then close it.\n");
+        close(retfd);
+        return 0;
+    }
+    buf[retr] = '\0';
+    if(strcmp(buf, "READY") != 0){
+        BLOGE("unrecognized message from new data session, the link needs to close, msg: %s.\n", buf);
+        close(retfd);
+        return 0;
+    }
+    return retfd;
+}
+
+static int getModlFd(const char* servAddr)
+{
+    int retfd;
+    char tmpPath[MAX_PATH];
+    snprintf(tmpPath, MAX_PATH, "%s%s", g_csWorkDir, "modl");
+    retfd = getfd(servAddr, tmpPath, chnlNames[1]);
+    if(retfd <= 0){
+        return retfd;
+    } 
+    const unsigned BufLen = 10;
+    char buf[BufLen];
+    int retr = read(retfd, buf, BufLen -1);
+    if(retr <=0){
+        BLOGE("failed to read data from new modl session, then close it.\n");
+        close(retfd);
+        return 0;
+    }
+    buf[retr] = '\0';
+    if(strcmp(buf, "READY") != 0){
+        BLOGE("unrecognized message from new modl session, the link needs to close, expected: 'READY'; received: %s.\n", buf);
+        close(retfd);
+        return 0;
+    }
+    return retfd;
+}
+
+//TODO why to do this? reconnect three sessions synchronously once one of them is broken.
+void* maintainSession(void* param)
+{
+    SessionStruct* pss = (SessionStruct*) param;
+    while(pss->getIsRun())
+    {
+        bool connected = pss->connectServRec();
+        if(!connected){
+            sleep(3);
+        }
+        struct pollfd fdarr[1];
+        pthread_mutex_lock(&pss->fdsLock);
+        fdarr[0].fd = pss->ressFd;
+        fdarr[0].events = POLLIN;
+        pthread_mutex_unlock(&pss->fdsLock);
+        int timeout = 1 * 1000;
+        int retpoll;
+        short errbits = POLLERR | POLLHUP | POLLNVAL;
+        while(pss->getIsRun())
+        {
+            bool needRecon = false;
+            pthread_mutex_lock(&pss->fdsLock);
+            needRecon = pss->dataFd == -1 || pss->modlFd == -1;
+            pthread_mutex_unlock(&pss->fdsLock);
+            if(needRecon) break;
+            retpoll = poll(fdarr, 1, timeout);
+            if(retpoll <= 0){
+                if(!pss->getIsRun()) break;
+                if(retpoll == 0){
+                    continue;
+                }
+                else{
+                   BLOGE("encounter errors while poll. error: %s\n", strerror(errno)); 
+                    break;
+                }
+            }
+            if(fdarr[0].revents & POLLIN){
+                Audiz_Result res;
+                int retread = read(fdarr[0].fd, &res, sizeof(res));
+                if(retread != sizeof(res)){
+                    if(retread == 0){
+                        BLOGE("maintainSession result session is closed.\n");
+                        break;
+                    }
+                    else{
+                        BLOGE("maintainSession read less data than result_struct, len: %u, expect len:%u.\n", retread, sizeof(res));
+                    }
+                }
+                pss->repResAddr(&res);
+            }
+            if(fdarr[0].revents & errbits){
+                BLOGE("the link is broken while polling.\n");
+                break;
+            }
+        }
+        pss->closeServRec();
+        sleep(3);//avoid reconnecting frequently.
+    }
+}
+const char *chnlNames[3] = {
+    "PUT_DATA",
+    "PUT_SPKMDL",
+    "GET_RESULT"
+};
+
 bool SessionStruct::writeData(unsigned long long id, char *buf, unsigned len)
 {
     bool ret = false;
@@ -670,44 +762,4 @@ bool SessionStruct::writeData(unsigned long long id, char *buf, unsigned len)
     return ret;
 }
 
-bool SessionStruct::writeModl(const char* strHd, char *buf, unsigned len)
-{
-    bool ret = false;
-    PckVec pcks[3];
-    static char pckhd[SPKMDL_HDLEN];
-    const unsigned pckhdlen = SPKMDL_HDLEN;
-    memset(pckhd, 0, pckhdlen);
-    strncpy(pckhd, strHd, pckhdlen);
-    pcks[0].base = pckhd;
-    pcks[0].len = pckhdlen;
-    pcks[1].base = (char*)&len;
-    pcks[1].len = sizeof(len);
-    pcks[2].base = buf;
-    pcks[2].len = len;
-    pthread_mutex_lock(&fdsLock);
-    int mdlfd = this->modlFd;
-    pthread_mutex_unlock(&fdsLock);
-
-    if(mdlfd){
-        BLOGE("no client being connected to consume the data.\n");
-        return ret;
-    }
-    int cls = 0;
-    writen(mdlfd, pcks, 3, &cls, 0);
-    if(cls !=0){
-        if(cls == -1){
-            BLOGE("the modl link is broken, then needs to be closed.\n");
-            closeModlLink();
-        }
-        else {
-            BLOGE("the modl link becomes congesting, try count: %d\n", cls);       
-            ret =true;
-        }
-    }
-    else{
-        ret = true;
-    }
-
-    return ret;
-}
-
+ */

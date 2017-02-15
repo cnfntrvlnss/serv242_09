@@ -27,6 +27,7 @@ typedef struct {
 
 size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry);
 size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry);
+
 int cli_conn(const char *name, const char *addr);
 void set_fl(int fd, int flags);
 int serv_listen(const char *name);
