@@ -73,6 +73,7 @@ struct SpkMdlSt{
 struct Audiz_PResult_Head{
     int32_t type;
     int32_t ack;
+    //TODO redundant defination.
     int getArgLen(){
         if(type == AZOP_QUERY_SAMPLE + 1){
             if(ack > 0) return ack * SPKMDL_HDLEN;
@@ -130,10 +131,12 @@ struct Audiz_PRequest_Head{
     }
 };
 
+/*
 struct Audiz_PRequest{
     Audiz_PRequest_Head head;
     char *addBuf;
 };
+*/
 
 class Audiz_PRequest_Head_OnWire{
 public:

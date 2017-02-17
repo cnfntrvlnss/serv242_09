@@ -16,15 +16,42 @@ using namespace std;
 #include "../audizstruct.h"
 #include "../apueclient.h"
 
+#ifndef LOG4CPLUS
+#define LOG4CPLUS_ERROR(x, ...) cerr<< __VA_ARGS__
+#define LOG4CPLUS_DEBUG(x, ...) cerr<< __VA_ARGS__
+
+#endif
 int g_DataFd;
 int g_ModlFd;
 pthread_cond_t g_DtMdFdCond;
 pthread_mutex_t g_DtMdFdLock;
 
-static size_t readn(int fd, vector<AZ_PckVec> &pcks, int *err, int istry)
+static inline size_t readn(int fd, vector<AZ_PckVec> &pcks, int *err, int istry)
 {
-    return readn(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), err, istry);
+    size_t retr = readn(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), err, istry);
+    return retr;
 }
+
+static inline size_t readn(int fd, string *vals, unsigned len, int *err, int istry)
+{
+    vector<PckVec> pcks;
+    pcks.resize(len);
+    for(unsigned idx=0; idx < pcks.size(); idx++){
+        pcks[idx].base = const_cast<char*>(vals[idx].c_str());
+        pcks[idx].len = vals[idx].size();
+    }
+    return readn(fd, &pcks[0], pcks.size(), err, istry);
+}
+
+static pthread_mutex_t g_ModlFdLock = PTHREAD_MUTEX_INITIALIZER;
+static inline size_t writen_s(int fd, AZ_PckVec* pcks, unsigned len, int *err, int istry)
+{
+    pthread_mutex_lock(&g_ModlFdLock);
+    size_t retw = writen(fd, reinterpret_cast<PckVec*>(pcks), len, err, istry);
+    pthread_mutex_unlock(&g_ModlFdLock);
+    return retw;
+}
+
 static bool parseSpkMdlName(char *tmpBuf, unsigned tok1, unsigned tok2, unsigned tok3)
 {
     char *pch;
@@ -42,6 +69,7 @@ static bool parseSpkMdlName(char *tmpBuf, unsigned tok1, unsigned tok2, unsigned
     return true;
 }
 
+static string g_tmpAudioData;
 /*****************************************************
  * if receive project whose id is 0, then discard it;
  * if receive data with length 0, then regard it as finishing transfering this project.
@@ -61,74 +89,91 @@ static bool procDataReceived(int dataFd)
             LOG4CPLUS_ERROR(g_logger, "the data link has broken, and close it. __LINE__: "<< __LINE__);
             return false;
         }
+        else if(err > 0){
+            LOG4CPLUS_ERROR(g_logger, "while readn for wave head, try "<< err<< " times.");
+        }
         if(retr == 0) break;
-        if(memcmp(datavec[1].base, dataRedunArr, DATAREDUNSIZE) != 0){
-            LOG4CPLUS_ERROR(g_logger, "redundancy check fails, and close the data link.");
+        if(!Audiz_Wave_OnWire::isValid(pcks)){
             return false;
         }
-        static PckVec segs[1];
-        segs[0].len = len;
-        segs[0].base = getGlobalSegment(len);
-        readn(dataFd, segs, 1, &err, 0);
+        if(unit.m_iDataLen == 0){
+            notifyProjFinish(unit.m_iPCBID);
+            continue;
+        }
+
+        g_tmpAudioData.resize(unit.m_iDataLen);
+        readn(dataFd, &g_tmpAudioData, 1, &err, 0);
         if(err == -1){
             LOG4CPLUS_ERROR(g_logger, "the data link has broken, and close it. __LINE__: "<< __LINE__);
             return false;
         }
-        if(segs[0].len > 0){
-            recvProjSegment(id, segs[0].base, segs[0].len, !g_bDiscardable);
+        else if(err > 0){
+            LOG4CPLUS_ERROR(g_logger, "while readn for wave data, try "<< err<< " times.");
         }
-        else if(id != 0){
-            notifyProjFinish(id);
-        }
-        LOG4CPLUS_DEBUG(g_logger, "PID="<< id<< " new data arrived len="<< len);
+        recvProjSegment(unit.m_iPCBID, const_cast<char*>(g_tmpAudioData.c_str()), g_tmpAudioData.size());
+        LOG4CPLUS_DEBUG(g_logger, "PID="<< unit.m_iPCBID<< " new data arrived len="<< unit.m_iDataLen);
     }
     return true;
 }
 
+/**
+ *
+ * TODO do some to verify it's ok to do write and read with the same fd concurrently. 
+ */
 static bool procModlReceived(int mdlFd)
 {
-    static PckVec mdlvec[2];
-    static unsigned len;
-    static const unsigned hdlen = SPKMDL_HDLEN;
-    static char tmpbuf[hdlen];
-    mdlvec[0].base = tmpbuf;
-    mdlvec[0].len = hdlen;
-    mdlvec[1].base = (char*)&len;
-    mdlvec[1].len = sizeof(unsigned);
+    Audiz_PRequest_Head reqhd;
+    vector<AZ_PckVec> pcks;
     int err;
-    while(true){
-        size_t retr = readn(mdlFd, mdlvec, 2, &err, 1);
+    size_t retr = readn(mdlFd, pcks, &err, 0);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived error occurs while reading Audiz_PRequest_Head.");
+        return false;
+    }
+    else if(err > 0){
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived reading Audiz_PRequest_Head have tried "<< err<< " times.");
+    }
+    if(reqhd.type == AZOP_QUERY_SAMPLE){
+        Audiz_PResult_Head reshd;
+        reshd.type = AZOP_QUERY_SAMPLE + 1;
+        reshd.ack = 0;
+        vector<AZ_PckVec> pcks;
+        Audiz_PResult_Head_OnWire::serialize(reshd, pcks);
+        int err;
+        writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err == -1){
-            LOG4CPLUS_ERROR(g_logger, "the spk link has broken, and close it. __LINE__: "<< __LINE__);
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_QUERY_SAMPLE failed.");
             return false;
         }
-        //finish all models on the wire.
-        if(retr == 0) return true;
-        unsigned speakid, srvtype, harmlevel;
-        if(!parseSpkMdlName(tmpbuf, speakid, srvtype, harmlevel)){
-            LOG4CPLUS_ERROR(g_logger, "fails to parse spkmdl from mdl link, and close it. __LINE__: "<< __LINE__);
-            return false;
-        }
-        PckVec segs[1];
-        segs[0].base = getGlobalSegment(len);
-        segs[0].len = len;
-        readn(mdlFd, segs, 1, &err, 0);
+    }
+    else if(reqhd.type == AZOP_ADD_SAMPLE){
+        Audiz_PResult_Head reshd;
+        reshd.type = AZOP_ADD_SAMPLE + 1;
+        reshd.ack = 0;
+        vector<AZ_PckVec> pcks;
+        Audiz_PResult_Head_OnWire::serialize(reshd, pcks);
+        int err;
+        writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err == -1){
-            LOG4CPLUS_ERROR(g_logger, "the spk link has broken, and close it. __LINE__: "<< __LINE__);
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_ADD_SAMPLE failed.");
             return false;
         }
-        if(g_bUseSpk){
-            if(segs[0].len == 0){
-                RemoveSpeaker(speakid);   
-            }
-            else{
-                AddSpeaker(speakid, segs[0].base, segs[0].len, srvtype, harmlevel);
-            }
+    }
+    else if(reqhd.type == AZOP_QUERY_PROJ){
+        Audiz_PResult_Head reshd;
+        reshd.type = AZOP_QUERY_PROJ + 1;
+        reshd.ack = queryProjNum();
+        vector<AZ_PckVec> pcks;
+        Audiz_PResult_Head_OnWire::serialize(reshd, pcks);
+        writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
+        if(err == -1){
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_QUERY_PROJ failed.");
+            return false;
         }
-        else{
-            LOG4CPLUS_WARN(g_logger, "the spk model is overlooked as speaker module being disabled, speakerid: "<< speakid<< "; modellen: "<< segs[0].len);
-        }
-
+    }
+    else {
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived unrecognized Audiz_PRequest_Head. type: "<< reqhd.type);
+        return false;
     }
 }
 

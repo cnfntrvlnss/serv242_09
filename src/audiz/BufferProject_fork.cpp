@@ -41,3 +41,19 @@ bool recvProjSegment(unsigned long int id, char *data, unsigned len)
     }
     return true;
 }
+
+void notifyProjFinish(unsigned long int pid)
+{
+    if(g_allProjs.find(pid) == g_allProjs.end()){
+        fprintf(stderr, "PID=%lu before finishing it, no data arrives.");
+        return;
+    }
+    FILE *fp = g_allProjs[pid];
+    fclose(fp);
+    g_allProjs.erase(pid);
+}
+
+unsigned queryProjNum()
+{
+    return g_allProjs.size();
+}
