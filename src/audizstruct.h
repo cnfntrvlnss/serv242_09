@@ -8,12 +8,15 @@
 #ifndef _AUDIZSTRUCT_H
 #define _AUDIZSTRUCT_H
 
-#include <cstdint>
+//#include <cstdint>
 #include <cstring>
 #include <vector>
 
+typedef long int int64_t;
+typedef int int32_t;
+
 struct AZ_PckVec{
-    AZ_PckVec(const char* base, unsigned *len):
+    AZ_PckVec(const char* base, unsigned len):
         base(const_cast<char*>(base)), len(len)
     {}
     char *base;
@@ -57,7 +60,7 @@ struct SpkMdlSt{
 #define AZOP_START_MARK 64
 #define AZOP_QUERY_SAMPLE AZOP_START_MARK
 #define AZOP_ADD_SAMPLE (AZOP_START_MARK + 2)
-#define AZOP_DEL_SAMPLE (AZOP_START_MARK + 4)
+//#define AZOP_DEL_SAMPLE (AZOP_START_MARK + 4)
 #define AZOP_ADD_SAMPLEFILE (AZOP_START_MARK + 6)
 #define AZOP_QUERY_PROJ (AZOP_START_MARK + 8)
 #define AZOP_QUERY_SPACE (AZOP_START_MARK + 10)
@@ -67,86 +70,124 @@ struct SpkMdlSt{
 #define CHARS_AS_INIT32(chs) *(reinterpret_cast<int32_t*>(chs))
 #define CHARS_AS_INIT64(chs) *(reinterpret_cast<int64_t*>(chs))
 
-//used in p_client.
-struct Audiz_PResult{
+struct Audiz_PResult_Head{
     int32_t type;
     int32_t ack;
-    char *argBuf;
-    
     int getArgLen(){
         if(type == AZOP_QUERY_SAMPLE + 1){
-            if(ack > 0) return ack * 64;
+            if(ack > 0) return ack * SPKMDL_HDLEN;
+            else return 0;
         }
         else if(type == AZOP_ADD_SAMPLE + 1){
-            return 0;
-        }
-        else if(type == AZOP_DEL_SAMPLE + 1){
             return 0;
         }
         else if(type == AZOP_ADD_SAMPLEFILE + 1){
             return 0;
         }
+        else if(type == AZOP_REC_RESULT){
+            return ack * sizeof(Audiz_Result);
+        }
+        else if(type == AZOP_QUERY_PROJ){
+            return 0;
+        }
         else{
             return -1;
         }
+        return -1;
     }
+};
+
+class Audiz_PResult_Head_OnWire{
+public:
+    static void serialize(const Audiz_PResult_Head &res, std::vector<AZ_PckVec>& pcks){
+        pcks.clear();
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(res.type)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(res.ack)), sizeof(int32_t)));
+    }
+    static void getEmptyPckVec(Audiz_PResult_Head &res, std::vector<AZ_PckVec>& pcks){
+        pcks.clear();
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&res.type), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&res.ack), sizeof(int32_t)));
+    }
+};
+
+//used in p_client.
+struct Audiz_PResult{
+    Audiz_PResult_Head head;
+    char *argBuf;
     void reset(){
-        type = 0;
-        ack = 0;
+        head.type = 0;
+        head.ack = 0;
         argBuf = NULL;
     }
-
 };
 
 struct Audiz_PRequest_Head{
     int32_t type;
     int32_t addLen;
-    //char *addBuf;
+    unsigned getArgLen(){
+        return addLen;
+    }
+};
+
+struct Audiz_PRequest{
+    Audiz_PRequest_Head head;
+    char *addBuf;
 };
 
 class Audiz_PRequest_Head_OnWire{
 public:
-    static void serialize(const Audiz_PRequest_Head &req, vector<AZ_PckVec> &pcks){
+    static void serialize(const Audiz_PRequest_Head &req, std::vector<AZ_PckVec> &pcks){
         pcks.clear();
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(req.type)), sizeof(int32_t));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(req.addLen)), sizeof(int32_t));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(req.type)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(req.addLen)), sizeof(int32_t)));
     }
-    static void getEmptyPckVec(Audiz_PRequest_Head &req, vector<AZ_PckVec> &pcks){
+    static void getEmptyPckVec(Audiz_PRequest_Head &req, std::vector<AZ_PckVec> &pcks){
         pcks.clear();
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(req.type)), sizeof(int32_t));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(req.addLen)), sizeof(int32_t));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(req.type)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(req.addLen)), sizeof(int32_t)));
     }
 };
 
 class SpkMdlSt_OnWire{
 public:
-    static void Serialize(const SpkMdlSt)
+    static void Serialize(const SpkMdlSt &mdl, std::vector<AZ_PckVec> &pcks){
+        pcks.clear();
+        pcks.push_back(AZ_PckVec(const_cast<char*>(mdl.head), SPKMDL_HDLEN));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<unsigned &>(mdl.len)), sizeof(unsigned)));
+        pcks.push_back(AZ_PckVec(const_cast<char*>(mdl.buf), mdl.len));
+    }
+    static void getEmptyPckVec(SpkMdlSt &mdl, std::vector<AZ_PckVec> &pcks){
+        pcks.clear();
+        pcks.push_back(AZ_PckVec((mdl.head), SPKMDL_HDLEN));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(mdl.len)), sizeof(unsigned)));
+    }
 };
 
+static const unsigned DATAREDUNSIZE = 8;
+const static char dataRedunArr[] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
 class Audiz_Wave_OnWire{
 public:
-    const static unsigned DATAREDUNSIZE = 8;
-    const static char dataRedunArr[DATAREDUNSIZE] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
-    static void appendFixedFields(Audiz_WaveUnit &unit, vector<AZ_PckVec> &pcks){
+    //static const char* redunStr = "\001\002\003\004\005";
+    static void appendFixedFields(Audiz_WaveUnit &unit, std::vector<AZ_PckVec> &pcks){
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&unit.m_iPCBID), sizeof(int64_t)));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&unit.m_pPCB),  sizeof(void*)));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&unit.m_iDataLen, sizeof(int32_t))));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&unit.m_iDataLen), sizeof(int32_t)));
     }
-    static void serialize(Audiz_WaveUnit &unit, vector<AZ_PckVec> &pcks){
+    static void serialize(Audiz_WaveUnit &unit, std::vector<AZ_PckVec> &pcks){
         pcks.clear();
         pcks.push_back(AZ_PckVec(const_cast<char*>(dataRedunArr), 8));
-        appendFields(unit, pcks);
+        appendFixedFields(unit, pcks);
         if(unit.m_iDataLen > 0) pcks.push_back(AZ_PckVec(unit.m_pData, unit.m_iDataLen));
     }
 
-    static void getEmptyPckVec( vector<AZ_PckVec> &pcks, Audiz_WaveUnit *punit, char *&buBuf){
+    static void getEmptyPckVec( std::vector<AZ_PckVec> &pcks, Audiz_WaveUnit &unit, char *buBuf){
         pcks.clear();
-        buBuf = (char*)malloc(8);
-        pcks.push_back(AZ_PckVec(buBuf, 8));
+        pcks.push_back(AZ_PckVec((buBuf), 8));
         appendFixedFields(unit, pcks);
     }
     
-    static bool isValid(vector<AZ_PckVec &pcks){
+    static bool isValid(std::vector<AZ_PckVec> &pcks){
         if(memcmp(pcks[0].base, dataRedunArr, DATAREDUNSIZE) != 0) return false;
         return true;
     }

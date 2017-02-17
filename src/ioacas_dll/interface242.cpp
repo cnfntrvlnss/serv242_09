@@ -95,7 +95,12 @@ bool SetRecord(int iType, bool bRecord)
 int SendData2DLL(WavDataUnit *p)
 {
     clockoutput_start("SendData2DLL");
-    g_AudizSess->writeData(p->m_iPCBID, p->m_pData, p->m_iDataLen);
+    Audiz_WaveUnit unit;
+    unit.m_iPCBID = p->m_iPCBID;
+    unit.m_iDataLen = p->m_iDataLen;
+    unit.m_pData = p->m_pData;
+    unit.m_pPCB = p->m_pPCB;
+    g_AudizSess->writeData(&unit);
     string output = clockoutput_end();
     LOGFMT_TRACE(g_logger, output.c_str());
     return 0;
@@ -123,10 +128,19 @@ int CloseDLL()
 
 extern "C" void notifyProjFinish(unsigned long pid)
 {
-    
+    Audiz_WaveUnit unit;
+    unit.m_iPCBID = pid;
+    unit.m_iDataLen = 0;
+    unit.m_pData = NULL;
+    unit.m_pPCB = NULL;
+    g_AudizSess->writeData(&unit);
 }
 
 extern "C" bool isAllFinished()
 {
-    return false;
+    unsigned retm = g_AudizSess->queueUnfinishedProjNum();
+    if(retm != 0){
+        return false;
+    }
+    return true;
 }

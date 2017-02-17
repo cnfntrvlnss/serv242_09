@@ -35,7 +35,7 @@ public:
     bool writeData(Audiz_WaveUnit* unit);
     bool writeSample(const char *name, char *buf, unsigned len);
     bool deleteSample(const char *name);
-    bool queueSamples(std::vector<std::string> smps);
+    bool queueSamples(std::vector<std::string> &smps);
     unsigned queueUnfinishedProjNum();
 
     friend void* maintainSession_ex(void* param);
@@ -63,7 +63,7 @@ private:
     }
     int prochandleResp();
     int procSendCfgCmd();
-    int procExecCommonCfgCmd(std::vector<std::string>& task, Audiz_PResult result);
+    int procExecCommonCfgCmd(std::vector<AZ_PckVec>& task, Audiz_PResult &result);
 
     /////////////////data part//////////////////
     char servPath[MAX_PATH];
@@ -80,10 +80,10 @@ private:
     pthread_mutex_t cfgCmdLock;
     pthread_cond_t cfgCmdResultSetCond;
     pthread_cond_t cfgCmdTaskEmptyCond;
-    std::vector<std::string> cfgCmdTask;
+    std::vector<AZ_PckVec> cfgCmdTask;
     Audiz_PResult cfgCmdResult;
     //used to send modl asanchronizely.
-    list<SpkMdlData> allmdls;
+    //list<SpkMdlData> allmdls;
 };
 
 #endif 

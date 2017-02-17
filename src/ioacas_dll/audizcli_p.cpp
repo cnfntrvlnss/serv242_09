@@ -6,6 +6,8 @@
  ************************************************************************/
 
 #include <sys/socket.h>
+#include <sys/select.h>
+//#include <sys/time.h>
 #include <unistd.h>
 #include <poll.h>
 
@@ -46,18 +48,17 @@ static char g_csWorkDir[MAX_PATH] = "ioacas/";
  * and wait for result in shared space for result with cfglink.
  * attention: result should be freed manually.
  */
- int SessionStruct::procExecCommonCfgCmd(std::vector<std::string>& task, Audiz_PResult result)
+ int SessionStruct::procExecCommonCfgCmd(std::vector<AZ_PckVec>& task, Audiz_PResult &result)
 {
     pthread_mutex_lock(&cfgCmdLock);
     while(cfgCmdTask.size() > 0){
         pthread_cond_wait(&cfgCmdTaskEmptyCond, &cfgCmdLock);
     }
 
-    //TODO string operation is alright for binary data?
     cfgCmdTask.insert(cfgCmdTask.end(), task.begin(), task.end());
     cfgCmdResult.reset();
 
-    while(cfgCmdResult.type == 0){
+    while(cfgCmdResult.head.type == 0){
         pthread_cond_wait(&cfgCmdResultSetCond, &cfgCmdLock);
     }
     cfgCmdTask.clear();
@@ -68,6 +69,7 @@ static char g_csWorkDir[MAX_PATH] = "ioacas/";
     return 0;
 }
 
+/*
 size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
 {
     PckVec *tmpPcks = new PckVec[cnt];
@@ -79,6 +81,7 @@ size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
     delete [] tmpPcks;
     return ret;
 }
+*/
 
 /**
  * send one cfgcmd to server, wait the response matching to the cfgcmd.
@@ -93,23 +96,20 @@ size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
     }
     unsigned tolLen = 0;
     for(size_t idx=0; idx < cfgCmdTask.size(); idx++){
-        tolLen += cfgCmdTask[idx].size();
+        tolLen += cfgCmdTask[idx].len;
     }
     int err;
-    vector<PckVec> vecResult;
-    vecResult.resize(2);
-    vecResult[0].base = reinterpret_cast<char*>(&cfgCmdResult.type);
-    vecResult[0].len = 4;
-    vecResult[1].base = reinterpret_cast<char*>(&cfgCmdResult.type);
-    vecResult[1].len = 4;
-    if(writen(modlFd, &cfgCmdTask[0], cfgCmdTask.size(), &err, 0) != tolLen){
+    //vector<AZ_PckVec> vecResult;
+    //Audiz_PResult_Head_OnWire::serialize(cfgCmdResult.head, vecResult);
+    if(writen(modlFd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0) != tolLen){
         BLOGE("procExecCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
-        CHARS_AS_INIT32(vecResult[0].base)= CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].c_str())) + 1;
-        CHARS_AS_INIT32(vecResult[1].base) = -1;
+        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
+        cfgCmdResult.head.ack = -1;
         //TODO in most cases, the link needs be closed here.
         closeModlLink();
     }
     pthread_mutex_unlock(&cfgCmdLock);
+    return 0;
 }
 
 /**
@@ -119,16 +119,13 @@ size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
 int SessionStruct::prochandleResp()
 {
     Audiz_PResult azres;
-    vector<PckVec> vecResult;
-    vecResult.resize(2);
-    vecResult[0].base = reinterpret_cast<char*>(&azres.type);
-    vecResult[0].len = 4;
-    vecResult[1].base = reinterpret_cast<char*>(&azres.ack);
-    vecResult[1].len = 4;
+    Audiz_PResult_Head azreshd;
+    vector<AZ_PckVec> vecResult;
+    Audiz_PResult_Head_OnWire::getEmptyPckVec(azreshd, vecResult);
     int restype = AZOP_INVALID_MARK;
     pthread_mutex_lock(&cfgCmdLock);
     if(cfgCmdTask.size() > 0){
-        restype = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].c_str())) + 1;
+        restype = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
     }
     else{
         pthread_mutex_lock(&cfgCmdLock);
@@ -136,7 +133,7 @@ int SessionStruct::prochandleResp()
     int ret = 0;
     while(true){
         int err;
-        unsigned retrn = readn(modlFd, &vecResult[0], 2, &err, 0);
+        unsigned retrn = readn(modlFd, reinterpret_cast<PckVec*>(&vecResult[0]), 2, &err, 0);
         if(retrn != 8){
             BLOGE("SessionStruct::prochandleResp error read head of response of cmd from modl link. error: %s.", strerror(errno));
             ret = -1;
@@ -145,7 +142,7 @@ int SessionStruct::prochandleResp()
         if(err > 0){
             BLOGW("SessionStruct::prochandleResp have tried %u times to read response.", err);
         }
-        unsigned arglen = azres.getArgLen();
+        unsigned arglen = azreshd.getArgLen();
         if(arglen > 0){
             PckVec argPck;
             argPck.base = (char*)malloc(arglen);
@@ -158,7 +155,7 @@ int SessionStruct::prochandleResp()
                 break;
             }
             
-            if(azres.type == AZOP_REC_RESULT){
+            if(azreshd.type == AZOP_REC_RESULT){
                 unsigned reslen = arglen / sizeof(Audiz_Result);
                 Audiz_Result *ress = reinterpret_cast<Audiz_Result*>(argPck.base);
                 for(unsigned idx=0; idx < reslen; idx++){
@@ -168,8 +165,11 @@ int SessionStruct::prochandleResp()
                 }
                 free(argPck.base);
             }
-            else if(azres.type != restype){
+            else if(azreshd.type != restype){
                 free(argPck.base);
+            }
+            else{
+                azres.argBuf = argPck.base;
             }
         }
         else if(arglen < 0){
@@ -178,11 +178,11 @@ int SessionStruct::prochandleResp()
             break;
         }
 
-        if(azres.type != AZOP_REC_RESULT && azres.type != restype){
-            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azres.type, azres.ack);
+        if(azreshd.type != AZOP_REC_RESULT && azreshd.type != restype){
+            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azreshd.type, azreshd.ack);
         }
         if(restype != AZOP_INVALID_MARK){
-            if(restype != azres.type){
+            if(restype != azreshd.type){
                  continue;      
             }
         }
@@ -191,16 +191,18 @@ int SessionStruct::prochandleResp()
     if(ret == -1){
         //in most cases, the link needs be closed here.
         if(restype != AZOP_INVALID_MARK){
-            azres.type = restype;
-            azres.ack = -1;
+            azreshd.type = restype;
+            azreshd.ack = -1;
         }
         closeModlLink();
     }
     if(restype != AZOP_INVALID_MARK){
-        assert(azres.type == restype);    
+        assert(azreshd.type == restype);    
         cfgCmdResult = azres;
         pthread_mutex_unlock(&cfgCmdLock);
     }
+
+    return ret;
 }
 
 static int getModlLinkFd(const char* servAddr)
@@ -220,7 +222,7 @@ static int getModlLinkFd(const char* servAddr)
     pcks[0].base = cfgLinkName;
     pcks[0].len = 64;
     pcks[1].base = reinterpret_cast<char*>(&procid);
-    pcks[1].len = 64;
+    pcks[1].len = sizeof(unsigned long);
     int err;
     if(writen(retfd, pcks, 2, &err, 0) != pcks[0].len + pcks[1].len){
         BLOGE("getCfgLinkFd failed to write the first packet to connection to unpath %s. error: %s.", servAddr, strerror(errno));
@@ -231,15 +233,19 @@ static int getModlLinkFd(const char* servAddr)
     unsigned long retsid;
     char retData[64];
     PckVec retPcks[3];
-    unsigned tolLen = 0;
-    retPcks[0].len = retPcks[1].len = retPcks[2].len = 64;
-    tolLen = 192;
+    retPcks[0].base = retLinkName;
+    retPcks[0].len = 64;
+    retPcks[1].base = reinterpret_cast<char*>(&retsid);
+    retPcks[1].len = sizeof(unsigned long);
+    retPcks[2].base = retData;
+    retPcks[2].len = 64;
+    unsigned tolLen = retPcks[0].len + retPcks[1].len + retPcks[2].len;
     if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
         BLOGE("getCfgLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
         close(retfd);
         return 0;
     }
-    if(strcmp(retLinkName, cfgLinkName) != 0 && retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
+    if(strcmp(retLinkName, cfgLinkName) != 0 || retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
         BLOGE("getCfgLinkFd modl link failed to follow audiz protocol.");
         close(retfd);
         return 0;
@@ -264,7 +270,7 @@ static int getDataLinkFd(const char* servAddr)
     pcks[0].base = cfgLinkName;
     pcks[0].len = 64;
     pcks[1].base = reinterpret_cast<char*>(&procid);
-    pcks[1].len = 64;
+    pcks[1].len = sizeof(unsigned long);
     int err;
     if(writen(retfd, pcks, 2, &err, 0) != pcks[0].len + pcks[1].len){
         BLOGE("getDataLinkFd failed to write the first packet to connection to unpath %s. error: %s.", servAddr, strerror(errno));
@@ -275,15 +281,20 @@ static int getDataLinkFd(const char* servAddr)
     unsigned long retsid;
     char retData[64];
     PckVec retPcks[3];
-    unsigned tolLen = 0;
-    retPcks[0].len = retPcks[1].len = retPcks[2].len = 64;
-    tolLen = 192;
+    retPcks[0].base = retLinkName;
+    retPcks[0].len = 64;
+    retPcks[1].base = reinterpret_cast<char*>(&retsid);
+    retPcks[1].len = sizeof(unsigned long);
+    retPcks[2].base = retData;
+    retPcks[2].len = 64;
+    retPcks[1].len = sizeof(unsigned long);
+    unsigned tolLen = retPcks[0].len + retPcks[1].len + retPcks[2].len;
     if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
         BLOGE("getDataLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
         close(retfd);
         return 0;
     }
-    if(strcmp(retLinkName, cfgLinkName) != 0 && retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
+    if(strcmp(retLinkName, cfgLinkName) != 0 || retsid != procid || strcmp(AZ_LINKBUILDOK, retData) != 0){
         BLOGE("getDataLinkFd data link failed to follow audiz protocol.");
         close(retfd);
         return 0;
@@ -296,7 +307,7 @@ bool SessionStruct::checkDataFd()
     pthread_mutex_lock(&dataFdLock);
     if(dataFd == -1){
         int fd = getDataLinkFd(servPath);
-        if(fd > 0) dataFd == fd;
+        if(fd > 0) dataFd = fd;
     }
     bool ret = true;
     if(dataFd == -1) ret = false;
@@ -327,6 +338,10 @@ void* maintainSession_ex(void* param)
 
     while(pss->getIsRun()){
         if(!pss->checkModlFd()){
+            struct timeval tm;
+            tm.tv_sec = 3;
+            tm.tv_usec = 0;
+            select(0, NULL, NULL, NULL, &tm);
             continue;
         }
         fds[0].fd = pss->modlFd;
@@ -353,6 +368,8 @@ void* maintainSession_ex(void* param)
         
         pss->procSendCfgCmd();
     }
+
+    return NULL;
 }
 
 
@@ -441,11 +458,59 @@ bool SessionStruct::writeData(Audiz_WaveUnit *unit)
 
 bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
 {
-
+    SpkMdlSt tmpSpk;
+    int hdsize = SPKMDL_HDLEN - 1;
+    tmpSpk.head[hdsize] = '\0';
+    strncpy(tmpSpk.head, name, hdsize);
+    tmpSpk.buf = buf;
+    tmpSpk.len = len;
+    vector<AZ_PckVec> pcks;
+    Audiz_PRequest_Head req;
+    req.type = AZOP_ADD_SAMPLE;
+    req.addLen = 0;
+    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    unsigned st = pcks.size();
+    SpkMdlSt_OnWire::Serialize(tmpSpk, pcks);
+    for(unsigned idx = st; idx < pcks.size(); idx++){
+        req.addLen += pcks[idx].len;
+    }
+    Audiz_PResult res;
+    procExecCommonCfgCmd(pcks, res);
+    return true;
 }
-bool SessionStruct::deleteSample(const char *name);
-bool SessionStruct::queueSamples(std::vector<std::string> smps);
-unsigned SessionStruct::queueUnfinishedProjNum();
+bool SessionStruct::deleteSample(const char *name)
+{
+    return writeSample(name, NULL, 0);   
+}
+bool SessionStruct::queueSamples(std::vector<std::string> &smps)
+{
+    Audiz_PRequest_Head req;
+    req.type = AZOP_QUERY_SAMPLE;
+    req.addLen = 0;
+    vector<AZ_PckVec> pcks;
+    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    Audiz_PResult res;
+    procExecCommonCfgCmd(pcks, res);
+    if(res.argBuf != NULL){
+        for(int idx=0; idx < res.head.getArgLen(); idx+= SPKMDL_HDLEN){
+            smps.push_back(&res.argBuf[idx]);
+        }
+        free(res.argBuf);
+    }
+
+    return true;
+}
+unsigned SessionStruct::queueUnfinishedProjNum(){
+    Audiz_PRequest_Head req;
+    req.type = AZOP_QUERY_PROJ;
+    req.addLen = 0;
+    vector<AZ_PckVec> pcks;
+    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    Audiz_PResult res;
+    procExecCommonCfgCmd(pcks, res);
+    assert(res.argBuf == NULL);
+    return res.head.ack;
+}
 
 /*
 bool SessionStruct::writeModl(const char* strHd, char *buf, unsigned len)
