@@ -119,9 +119,9 @@ size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
 int SessionStruct::prochandleResp()
 {
     Audiz_PResult azres;
-    Audiz_PResult_Head azreshd;
+    //Audiz_PResult_Head azreshd;
     vector<AZ_PckVec> vecResult;
-    Audiz_PResult_Head_OnWire::getEmptyPckVec(azreshd, vecResult);
+    azres.head.pack_r(vecResult);
     int restype = AZOP_INVALID_MARK;
     pthread_mutex_lock(&cfgCmdLock);
     if(cfgCmdTask.size() > 0){
@@ -142,7 +142,7 @@ int SessionStruct::prochandleResp()
         if(err > 0){
             BLOGW("SessionStruct::prochandleResp have tried %u times to read response.", err);
         }
-        unsigned arglen = azreshd.getArgLen();
+        unsigned arglen = azres.getArgLen();
         if(arglen > 0){
             PckVec argPck;
             argPck.base = (char*)malloc(arglen);
@@ -155,7 +155,7 @@ int SessionStruct::prochandleResp()
                 break;
             }
             
-            if(azreshd.type == AZOP_REC_RESULT){
+            if(azres.head.type == AZOP_REC_RESULT){
                 unsigned reslen = arglen / sizeof(Audiz_Result);
                 Audiz_Result *ress = reinterpret_cast<Audiz_Result*>(argPck.base);
                 for(unsigned idx=0; idx < reslen; idx++){
@@ -165,7 +165,7 @@ int SessionStruct::prochandleResp()
                 }
                 free(argPck.base);
             }
-            else if(azreshd.type != restype){
+            else if(azres.head.type != restype){
                 free(argPck.base);
             }
             else{
@@ -178,11 +178,11 @@ int SessionStruct::prochandleResp()
             break;
         }
 
-        if(azreshd.type != AZOP_REC_RESULT && azreshd.type != restype){
-            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azreshd.type, azreshd.ack);
+        if(azres.head.type != AZOP_REC_RESULT && azres.head.type != restype){
+            BLOGE("SessionStruct::prochandleResp unexpected response from server. type: %d; ack: %d.", azres.head.type, azres.head.ack);
         }
         if(restype != AZOP_INVALID_MARK){
-            if(restype != azreshd.type){
+            if(restype != azres.head.type){
                  continue;      
             }
         }
@@ -191,13 +191,13 @@ int SessionStruct::prochandleResp()
     if(ret == -1){
         //in most cases, the link needs be closed here.
         if(restype != AZOP_INVALID_MARK){
-            azreshd.type = restype;
-            azreshd.ack = -1;
+            azres.head.type = restype;
+            azres.head.ack = -1;
         }
         closeModlLink();
     }
     if(restype != AZOP_INVALID_MARK){
-        assert(azreshd.type == restype);    
+        assert(azres.head.type == restype);    
         cfgCmdResult = azres;
         pthread_mutex_unlock(&cfgCmdLock);
     }
@@ -429,7 +429,7 @@ bool SessionStruct::writeData(Audiz_WaveUnit *unit)
         return false;
     }
     vector<AZ_PckVec> pcks;
-    Audiz_Wave_OnWire::serialize(*unit, pcks);
+    unit->pack_w(pcks);
     bool bret = false;
     pthread_mutex_lock(&dataFdLock);
     int fd = dataFd;
@@ -468,9 +468,9 @@ bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
     Audiz_PRequest_Head req;
     req.type = AZOP_ADD_SAMPLE;
     req.addLen = 0;
-    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    req.pack_w(pcks);
     unsigned st = pcks.size();
-    SpkMdlSt_OnWire::Serialize(tmpSpk, pcks);
+    tmpSpk.pack_r(pcks);
     for(unsigned idx = st; idx < pcks.size(); idx++){
         req.addLen += pcks[idx].len;
     }
@@ -488,11 +488,11 @@ bool SessionStruct::queueSamples(std::vector<std::string> &smps)
     req.type = AZOP_QUERY_SAMPLE;
     req.addLen = 0;
     vector<AZ_PckVec> pcks;
-    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    req.pack_w(pcks);
     Audiz_PResult res;
     procExecCommonCfgCmd(pcks, res);
     if(res.argBuf != NULL){
-        for(int idx=0; idx < res.head.getArgLen(); idx+= SPKMDL_HDLEN){
+        for(int idx=0; idx < res.getArgLen(); idx+= SPKMDL_HDLEN){
             smps.push_back(&res.argBuf[idx]);
         }
         free(res.argBuf);
@@ -505,7 +505,7 @@ unsigned SessionStruct::queueUnfinishedProjNum(){
     req.type = AZOP_QUERY_PROJ;
     req.addLen = 0;
     vector<AZ_PckVec> pcks;
-    Audiz_PRequest_Head_OnWire::serialize(req, pcks);
+    req.pack_w(pcks);
     Audiz_PResult res;
     procExecCommonCfgCmd(pcks, res);
     assert(res.argBuf == NULL);
