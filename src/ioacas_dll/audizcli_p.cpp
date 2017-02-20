@@ -39,7 +39,7 @@ enum BLOG_LEVEL{BLOGT, BLOGD, BLOGI, BLOGW, BLOGE};
 #define BLOGT(fmt, ...) LOGFMT_TRACE(g_logger, fmt, ##__VA_ARGS__)
 #endif
 
-static char g_csWorkDir[MAX_PATH] = "ioacas/";
+static char g_csWorkDir[MAX_PATH] = "ioacases/";
 
 /**
  * execute command synchronizely.
@@ -89,26 +89,26 @@ size_t writen(int fd, string *vec, unsigned cnt, int *err, int istry)
  */
  int SessionStruct::procSendCfgCmd()
 {
-    //TODO add commit command whose result is not cared.
+    //TODO add serialized commands having no response.
+    
+    //TODO make sure commiting command only once.
     pthread_mutex_lock(&cfgCmdLock);
     if(cfgCmdTask.size() == 0){
         pthread_mutex_unlock(&cfgCmdLock);
-    }
-    unsigned tolLen = 0;
-    for(size_t idx=0; idx < cfgCmdTask.size(); idx++){
-        tolLen += cfgCmdTask[idx].len;
+        return 0;
     }
     int err;
     //vector<AZ_PckVec> vecResult;
     //Audiz_PResult_Head_OnWire::serialize(cfgCmdResult.head, vecResult);
-    if(writen(modlFd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0) != tolLen){
+    writen(modlFd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
+    if(err < 0){
         BLOGE("procExecCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
         cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
         cfgCmdResult.head.ack = -1;
-        //TODO in most cases, the link needs be closed here.
         closeModlLink();
     }
     pthread_mutex_unlock(&cfgCmdLock);
+    if(err < 0) pthread_cond_broadcast(&cfgCmdResultSetCond);
     return 0;
 }
 
@@ -128,7 +128,7 @@ int SessionStruct::prochandleResp()
         restype = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
     }
     else{
-        pthread_mutex_lock(&cfgCmdLock);
+        pthread_mutex_unlock(&cfgCmdLock);
     }
     int ret = 0;
     while(true){
@@ -200,6 +200,7 @@ int SessionStruct::prochandleResp()
         assert(azres.head.type == restype);    
         cfgCmdResult = azres;
         pthread_mutex_unlock(&cfgCmdLock);
+        pthread_cond_broadcast(&cfgCmdResultSetCond);
     }
 
     return ret;
@@ -212,9 +213,10 @@ static int getModlLinkFd(const char* servAddr)
     snprintf(myPath, MAX_PATH, "%s%s", g_csWorkDir, "modl");
     retfd = cli_conn(myPath, servAddr); 
     if(retfd <= 0){
-       BLOGE("getCfgLinkFd failed to connect from %s to %s, error: %s.", myPath, servAddr, strerror(errno));
+       BLOGE("getCfgLinkFd failed to connect from %s to %s, ret: %d; error: %s.", myPath, servAddr, retfd, strerror(errno));
        return retfd;
     }
+    BLOGT("getModlLinkFd have created the link, client: %s; server: %s.", myPath, servAddr);
     char cfgLinkName[64];
     unsigned long procid = getpid();
     snprintf(cfgLinkName, 64, "%s", AZ_CFGLINKNAME);
@@ -241,7 +243,7 @@ static int getModlLinkFd(const char* servAddr)
     retPcks[2].len = 64;
     unsigned tolLen = retPcks[0].len + retPcks[1].len + retPcks[2].len;
     if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
-        BLOGE("getCfgLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
+        BLOGE("getCfgLinkFd failed to read response from server, error: %s.", strerror(errno));
         close(retfd);
         return 0;
     }
@@ -260,9 +262,10 @@ static int getDataLinkFd(const char* servAddr)
     snprintf(myPath, MAX_PATH, "%s%s", g_csWorkDir, "data");
     retfd = cli_conn(myPath, servAddr); 
     if(retfd <= 0){
-       BLOGE("getDataLinkFd failed to connect from %s to %s, error: %s.", myPath, servAddr, strerror(errno));
+       BLOGE("getDataLinkFd failed to connect from %s to %s, ret: %d; error: %s.", myPath, servAddr, retfd, strerror(errno));
        return retfd;
     }
+    BLOGT("getDataLinkFd have created the link, client: %s; server: %s.", myPath, servAddr);
     char cfgLinkName[64];
     unsigned long procid = getpid();
     snprintf(cfgLinkName, 64, "%s", AZ_DATALINKNAME);
@@ -290,7 +293,7 @@ static int getDataLinkFd(const char* servAddr)
     retPcks[1].len = sizeof(unsigned long);
     unsigned tolLen = retPcks[0].len + retPcks[1].len + retPcks[2].len;
     if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
-        BLOGE("getDataLinkFd failed to read message from server in second step. unpath: %s, error: %s.", servAddr, strerror(errno));
+        BLOGE("getDataLinkFd failed to read response from server, error: %s.", strerror(errno));
         close(retfd);
         return 0;
     }
@@ -441,7 +444,7 @@ bool SessionStruct::writeData(Audiz_WaveUnit *unit)
 
     bret = true;
     int cls = 0;
-    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), 4, &cls, 0);
+    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &cls, 0);
     if(cls != 0){
         if(cls == -1){
             closeDataLink();

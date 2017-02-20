@@ -8,33 +8,35 @@
 #include <poll.h>
 #include <pthread.h>
 
+#include <cerrno>
+#include <cstring>
 #include <cstdlib>
 #include<iostream>
 using namespace std;
 
-#include "BufferProject_fork.cpp"
+#include "BufferProject_fork.h"
 #include "../audizstruct.h"
 #include "../apueclient.h"
 
 #ifndef LOG4CPLUS
-#define LOG4CPLUS_ERROR(x, ...) cerr<< __VA_ARGS__
-#define LOG4CPLUS_WARN(x, ...) cerr<< __VA_ARGS__
-#define LOG4CPLUS_INFO(x, ...) cerr<< __VA_ARGS__
-#define LOG4CPLUS_DEBUG(x, ...) cerr<< __VA_ARGS__
+#define LOG4CPLUS_ERROR(x, ...) cerr<< __VA_ARGS__ << endl;
+#define LOG4CPLUS_WARN(x, ...) cerr<< __VA_ARGS__ << endl;
+#define LOG4CPLUS_INFO(x, ...) cerr<< __VA_ARGS__ << endl;
+#define LOG4CPLUS_DEBUG(x, ...) cerr<< __VA_ARGS__ << endl;
 
 #endif
 unsigned long g_SessID = 0;
 int g_DataFd = -1;
 int g_ModlFd = -1;
-pthread_cond_t g_DataFdCond;
-pthread_mutex_t g_DataFdLock;
-pthread_cond_t g_ModlFdCond;
-pthread_mutex_t g_ModlFdLock;
+pthread_cond_t g_DataFdCond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t g_DataFdLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t g_ModlFdCond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t g_ModlFdLock = PTHREAD_MUTEX_INITIALIZER;
 
 static bool setDataFd(int fd, unsigned long sid)
 {
     if(sid != g_SessID){
-        LOG4CPLUS_ERROR(g_logger, "as id of data link is not equal with current session id, refuse it. id: "<< sid<<"; sid: " << g_SessID);
+        LOG4CPLUS_ERROR(g_logger, "setDataFd new id is not equal with old id, refuse it. id: "<< sid<<"; sid: " << g_SessID);
         return false;
     }
     pthread_mutex_lock(&g_DataFdLock);
@@ -44,7 +46,7 @@ static bool setDataFd(int fd, unsigned long sid)
     }
     g_DataFd = fd;
     pthread_mutex_unlock(&g_DataFdLock);
-    
+    return true;
 }
 
 static void clearDataFd(int afd)
@@ -54,7 +56,7 @@ static void clearDataFd(int afd)
         close(g_DataFd);
         g_DataFd = -1;
     }
-    pthread_mutex_lock(&g_DataFdLock);
+    pthread_mutex_unlock(&g_DataFdLock);
 }
 
 static bool setModlFd(int mfd, unsigned long id)
@@ -67,7 +69,8 @@ static bool setModlFd(int mfd, unsigned long id)
     }
     g_ModlFd = mfd;
     g_SessID = id;
-    pthread_mutex_lock(&g_ModlFdLock);
+    pthread_mutex_unlock(&g_ModlFdLock);
+    return true;
 }
 static void clearModlFd(int mfd)
 {
@@ -171,8 +174,12 @@ static bool procDataReceived(int dataFd)
         else if(err > 0){
             LOG4CPLUS_ERROR(g_logger, "while readn for wave data, try "<< err<< " times.");
         }
-        recvProjSegment(unit.m_iPCBID, const_cast<char*>(g_tmpAudioData.c_str()), g_tmpAudioData.size());
-        LOG4CPLUS_DEBUG(g_logger, "PID="<< unit.m_iPCBID<< " new data arrived len="<< unit.m_iDataLen);
+        if(!recvProjSegment(unit.m_iPCBID, const_cast<char*>(g_tmpAudioData.c_str()), g_tmpAudioData.size())){
+            LOG4CPLUS_ERROR(g_logger, "procDataReceived loss one data unit. pid="<< unit.m_iPCBID<< "; size="<< g_tmpAudioData.size());
+        }
+        else{
+            LOG4CPLUS_DEBUG(g_logger, "PID="<< unit.m_iPCBID<< " new data arrived len="<< unit.m_iDataLen);
+        }
     }
     return true;
 }
@@ -194,6 +201,7 @@ static bool procModlReceived(int mdlFd)
     else if(err > 0){
         LOG4CPLUS_ERROR(g_logger, "procModlReceived reading Audiz_PRequest_Head have tried "<< err<< " times.");
     }
+
     if(reqhd.type == AZOP_QUERY_SAMPLE){
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_QUERY_SAMPLE + 1;
@@ -203,8 +211,11 @@ static bool procModlReceived(int mdlFd)
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err == -1){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_QUERY_SAMPLE failed.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_SAMPLE failed to write Audiz_PResult_Head.");
             return false;
+        }
+        else{
+            LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_QUERY_SAMPLE success.");
         }
     }
     else if(reqhd.type == AZOP_ADD_SAMPLE){
@@ -216,8 +227,11 @@ static bool procModlReceived(int mdlFd)
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err == -1){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_ADD_SAMPLE failed.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADD_SAMPLE failed to write Audiz_PResult_Head.");
             return false;
+        }
+        else{
+            LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_ADD_SAMPLE success.");
         }
     }
     else if(reqhd.type == AZOP_QUERY_PROJ){
@@ -228,14 +242,18 @@ static bool procModlReceived(int mdlFd)
         reshd.pack_w(pcks);
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err == -1){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived writing Audiz_PResult_Head marking AZOP_QUERY_PROJ failed.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_PROJ failed to write Audiz_PResult_Head.");
             return false;
+        }
+        else{
+            LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_QUERY_PROJ success.");
         }
     }
     else {
         LOG4CPLUS_ERROR(g_logger, "procModlReceived unrecognized Audiz_PRequest_Head. type: "<< reqhd.type);
         return false;
     }
+    return true;
 }
 
 /**
@@ -248,7 +266,7 @@ bool procImplAcceptLink(int servfd)
     uid_t uid;
     int tmpfd = serv_accept(servfd, &uid);
     if(tmpfd < 0){
-        fprintf(stderr, "serv_accept error. error: %s.\n", strerror(errno));
+        fprintf(stderr, "procImplAcceptLink serv_accept error. error: %s.\n", strerror(errno));
         return false;
     }
     Audiz_LinkResponse res;
@@ -260,31 +278,39 @@ bool procImplAcceptLink(int servfd)
     bool bsucc = false;
     while(true){
         nread = readn(tmpfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &errr, 0);
-        if(errr < 0) break;
+        if(errr < 0){
+            LOG4CPLUS_ERROR(g_logger, "procImplAcceptLink error occures while read first package from new link. error: "<< strerror(errno));
+             break;   
+        }
         if(strcmp(res.req.head, AZ_CFGLINKNAME) == 0){
+            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new data link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
             if(errw <0) break;
-            //TODO set modl link.
-            setModlFd(tmpfd, res.req.sid);
-            bsucc = true;
+            if(setModlFd(tmpfd, res.req.sid)){
+                bsucc = true;
+            }
         }
         else if(strcmp(res.req.head, AZ_DATALINKNAME) == 0){
+            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new modl link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
+            //TODO data link should non block.
+
             if(errw <0) break;
-            //TODO set data link.
-            setDataFd(tmpfd, res.req.sid);
-            bsucc = true;
+            if(setDataFd(tmpfd, res.req.sid)){
+                bsucc = true;
+            }
         }
         else{
-            LOG4CPLUS_WARN(g_logger, "unrecognized new link, name: "<< res.req.head);
+            LOG4CPLUS_WARN(g_logger, "procImplAcceptLink unrecognized new link, name: "<< res.req.head);
         }
         break;
     }
     if(!bsucc){
+        LOG4CPLUS_ERROR(g_logger, "procImplAcceptLink failed to process the new link.");
         close(tmpfd);
     }
     return true;
@@ -296,30 +322,31 @@ bool procImplAcceptLink(int servfd)
  */
 void *servRec_loop(void *param)
 {
-    static const char *unPath = "recogServer";
+    const char *unPath = AZ_DATACENTER;
     int servfd = serv_listen(unPath);
     if(servfd < 0){
-        fprintf(stderr, "serv_listen error. error: %s\n", strerror(errno));
+        LOG4CPLUS_ERROR(g_logger, "serv_listen error. path: "<< unPath<< "; error: "<< strerror(errno));
         exit(1);
     }
+    LOG4CPLUS_INFO(g_logger, "serv_listen at path "<< unPath);
     while(true){
-        int fdlen = 1;
+        int modlidx = 0;
+        int dataidx = 0;
         struct pollfd fdarr[3];
         fdarr[0].fd = servfd;
         fdarr[0].events = POLLIN;
-        while(true){
-            if(g_ModlFd == 0){
-                break;
-            }
-            fdarr[1].fd = g_ModlFd;
-            fdarr[1].events = POLLIN;
+        int fdlen = 1;
+        if(g_ModlFd > 0){
+            fdarr[fdlen].fd = g_ModlFd;
+            fdarr[fdlen].events = POLLIN;
+            modlidx = fdlen;
             fdlen ++;
-            if(g_DataFd == 0){
-                break;
-            }
-            fdarr[2].fd = g_DataFd;
-            fdarr[2].events = POLLIN;
-            break;
+        }
+        if(g_DataFd > 0){
+            fdarr[fdlen].fd = g_DataFd;
+            fdarr[fdlen].events = POLLIN;
+            dataidx = fdlen;
+            fdlen ++;
         }
         int retpoll = poll(fdarr, fdlen, -1);
         if(retpoll == 0){
@@ -338,48 +365,60 @@ void *servRec_loop(void *param)
             procImplAcceptLink(servfd);
         }
         
-        if(fdarr[0].revents != 0){
+        if(modlidx > 0 && fdarr[modlidx].revents != 0){
             bool bclose = false;
-            if(fdarr[0].revents & POLLIN ){
-                if(!procDataReceived(fdarr[0].fd)){
-                    bclose = true;
-                } 
-            }
-            short errbits = fdarr[0].revents & (POLLERR | POLLHUP | POLLNVAL);
-            if(errbits){
-                LOG4CPLUS_ERROR(g_logger, "the data link is broken while polling, fd: "<< fdarr[0].fd<< "; errbits: "<< errbits<< ".");
-                bclose = true;
-            }
-            if(bclose){
-                clearDataFd(fdarr[0].fd);
-            }
-        }
-        if(fdarr[1].revents != 0){
-            bool bclose = false;
-            if(fdarr[1].revents & POLLIN ) {
-                if(!procModlReceived(fdarr[1].fd)){
+            int curidx = modlidx;
+            if(fdarr[curidx].revents & POLLIN ) {
+                if(!procModlReceived(fdarr[curidx].fd)){
                     bclose = true;   
                 }
             }
-            short errbits1 = fdarr[1].revents & (POLLERR | POLLHUP | POLLNVAL);
-            if(errbits1){
-                LOG4CPLUS_ERROR(g_logger, "the modl link is broken while polling, fd: "<< fdarr[0].fd<< "; errbits: "<< errbits1<< ".");
+            short errbits = fdarr[curidx].revents & (POLLERR | POLLHUP | POLLNVAL);
+            if(errbits){
+                LOG4CPLUS_ERROR(g_logger, "the modl link is broken while polling, fd: "<< fdarr[curidx].fd<< "; errbits: "<< errbits<< ".");
                 bclose = true;
             }
             if(bclose){
-                clearModlFd(fdarr[1].fd);
+                clearModlFd(fdarr[curidx].fd);
             }
         }
         
+        if(dataidx > 0 && fdarr[dataidx].revents != 0){
+            bool bclose = false;
+            int curidx = dataidx;
+            if(fdarr[curidx].revents & POLLIN ){
+                if(!procDataReceived(fdarr[curidx].fd)){
+                    bclose = true;
+                } 
+            }
+            short errbits = fdarr[curidx].revents & (POLLERR | POLLHUP | POLLNVAL);
+            if(errbits){
+                LOG4CPLUS_ERROR(g_logger, "the data link is broken while polling, fd: "<< fdarr[curidx].fd<< "; errbits: "<< errbits<< ".");
+                bclose = true;
+            }
+            if(bclose){
+                clearDataFd(fdarr[curidx].fd);
+            }
+        }
     }
     return NULL;
 }
 
+#define handle_error(x, msg) do{perror(msg); exit(EXIT_FAILURE);} while(0)
+int main(int argc, char* argv[])
+{
+    pthread_t servThrdId;
+    int retp = pthread_create(&servThrdId, NULL, servRec_loop, NULL);
+    if(retp !=0 ){
+        handle_error(retp ,"pthread_create");
+    }
+    pthread_join(servThrdId, NULL);
+    exit(EXIT_SUCCESS);
+    return 0;
+}
 
-/**
- * fetch online data from link datafd and modlfd, hand it to the recogition system.
- *
- */
+/*
+
 void *onlineConsume_loop(void *param)
 {
     struct pollfd fdarr[2];
@@ -441,8 +480,6 @@ void *onlineConsume_loop(void *param)
         }
     }
 }
-/*
-
 void checkFdAndCloseBroken(int &curfd, pthread_mutex_t &curlock)
 {
     pthread_mutex_lock(&curlock);

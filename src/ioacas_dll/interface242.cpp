@@ -8,19 +8,21 @@
 #include "interface242.h"
 
 #include <cstdio>
+#include <string>
 #include<iostream>
-using namespace std;
 
 #include "globalfunc.h"
 #include "audizcli_p.h"
 //#include "log4z.h"
 
+using namespace std;
 static bool g_bInitialized = false;
 static unsigned int g_iModuleID;
 static SessionStruct *g_AudizSess;
 static ReceiveResult g_ReportResult;
 
-static const char g_AudizPath[] = "ioacases/recogMain";
+//static const char g_AudizPath[] = "ioacases/recogMain";
+static string g_AudizPath = (string)"ioacases/" + AZ_DATACENTER;
 
 static int audiz_reportResult(Audiz_Result *pResult)
 {
@@ -48,7 +50,7 @@ int InitDLL(int iPriority,
     }
     g_iModuleID = iModuleID;
     g_ReportResult = func; 
-    g_AudizSess = new SessionStruct(g_AudizPath, audiz_reportResult, audiz_getAllMdls);
+    g_AudizSess = new SessionStruct(g_AudizPath.c_str(), audiz_reportResult, audiz_getAllMdls);
     g_bInitialized = true;
     LOGI("InitDLL ioacas module is initialized successfully.");
     return 0;

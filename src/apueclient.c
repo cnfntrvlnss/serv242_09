@@ -102,7 +102,7 @@ size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
                     continue;
                 }
                 else{
-                    fprintf(stderr, "error read. errno: %d", curerr);
+                    fprintf(stderr, "error read. errno: %d.\n", curerr);
                     *err = -1;
                     break;
                 }
@@ -176,7 +176,7 @@ int cli_conn(const char *name, const char *addr)
 errout:
     err = errno;
     close(fd);
-    if(do_unlink) unlink(un.sun_path);
+    //if(do_unlink) unlink(un.sun_path);
     errno = err;
     return rval;
 }
@@ -250,6 +250,7 @@ int serv_accept(int listenfd, uid_t *uidptr)
     len -= offsetof(struct sockaddr_un, sun_path);
     memcpy(name, un.sun_path, len);
     name[len] = 0;
+    //fprintf(stderr, "new client arrives, addr: %s.\n", name);
     if(stat(name, &statbuf) < 0){
         rval =-3;
         goto errout;
@@ -279,7 +280,6 @@ int serv_accept(int listenfd, uid_t *uidptr)
     if(uidptr != NULL){
         *uidptr  = statbuf.st_uid;
     }
-    unlink(name);
     free(name);
     return (clifd);
 errout:

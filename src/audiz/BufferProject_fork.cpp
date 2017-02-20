@@ -35,9 +35,10 @@ FILE* getFile(unsigned long int pid)
 bool recvProjSegment(unsigned long int id, char *data, unsigned len)
 {
     FILE *fp = getFile(id);
+    if(fp == NULL) return false;
     size_t retw = fwrite(data, 1, len, fp);
     if(retw != len){
-        fprintf(stderr, "failed to save data. error: %s.", strerror(errno));
+        fprintf(stderr, "failed to save data. error: %s.\n", strerror(errno));
     }
     return true;
 }
@@ -45,7 +46,7 @@ bool recvProjSegment(unsigned long int id, char *data, unsigned len)
 void notifyProjFinish(unsigned long int pid)
 {
     if(g_allProjs.find(pid) == g_allProjs.end()){
-        fprintf(stderr, "PID=%lu before finishing it, no data arrives.");
+        fprintf(stderr, "PID=%lu before finishing it, no data arrives.\n", pid);
         return;
     }
     FILE *fp = g_allProjs[pid];

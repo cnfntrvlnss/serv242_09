@@ -39,7 +39,7 @@ struct Audiz_WaveUnit{
     void pack_w(std::vector<AZ_PckVec> &pcks) const{
         pcks.clear();
         pcks.push_back(AZ_PckVec(const_cast<char*>(dataRedunArr), 8));
-        appendFixedFields(*this, pcks);
+        appendFixedFields(const_cast<Audiz_WaveUnit&>(*this), pcks);
         if(m_iDataLen > 0) pcks.push_back(AZ_PckVec(m_pData, m_iDataLen));
     }
 
@@ -90,6 +90,7 @@ struct SpkMdlSt{
     }
 };
 
+#define AZ_DATACENTER "dataCenter"
 #define AZ_CFGLINKNAME "cfg link"
 #define AZ_DATALINKNAME "data link"
 #define AZ_LINKBUILDOK "server ok"
@@ -116,7 +117,7 @@ struct Audiz_LinkRequest{
     void pack_w(std::vector<AZ_PckVec>& pcks) const{
         pcks.clear();
         pcks.push_back(AZ_PckVec(const_cast<char*>(head), LinkNameLen));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<unsigned long&>(sid)), sizeof(unsigned long)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<unsigned long*>(&sid)), sizeof(unsigned long)));
     }
     void pack_r(std::vector<AZ_PckVec>& pcks){
         pcks.clear();
@@ -136,17 +137,18 @@ struct Audiz_LinkResponse{
         req.pack_r(pcks);
         pcks.push_back(AZ_PckVec(((ack)), LinkNameLen));
     }
-}
+};
+
 struct Audiz_PResult_Head{
     int32_t type;
     int32_t ack;
 
     void pack_w(std::vector<AZ_PckVec>& pcks) const{
         pcks.clear();
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(type)), sizeof(int32_t)));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(ack)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<int32_t*>(&type)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<int32_t*>(&ack)), sizeof(int32_t)));
     }
-    static void pack_r(std::vector<AZ_PckVec>& pcks){
+    void pack_r(std::vector<AZ_PckVec>& pcks){
         pcks.clear();
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&type), sizeof(int32_t)));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&ack), sizeof(int32_t)));
@@ -192,12 +194,12 @@ struct Audiz_PRequest_Head{
     int32_t type;
     int32_t addLen;
 
-    static void pack_w(std::vector<AZ_PckVec> &pcks) const{
+    void pack_w(std::vector<AZ_PckVec> &pcks) const{
         pcks.clear();
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(type)), sizeof(int32_t)));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<int32_t&>(addLen)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<int32_t*>(&type)), sizeof(int32_t)));
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<int32_t*>(&addLen)), sizeof(int32_t)));
     }
-    static void pack_r(std::vector<AZ_PckVec> &pcks){
+    void pack_r(std::vector<AZ_PckVec> &pcks){
         pcks.clear();
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(type)), sizeof(int32_t)));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(addLen)), sizeof(int32_t)));

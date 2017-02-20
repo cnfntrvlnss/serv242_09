@@ -22,7 +22,7 @@
 
 typedef struct {
     char *base;
-    size_t len;
+    unsigned len;
 } PckVec;
 
 size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry);
