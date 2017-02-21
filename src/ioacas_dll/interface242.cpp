@@ -36,6 +36,22 @@ static int audiz_getAllMdls(SpkMdlSt **pMdls)
     return 0;
 }
 
+class SpkMdlStVecImpl: public SpkMdlStVec, SpkMdlStVec::iterator
+{
+public:
+    SpkMdlStVecImpl* iter(){
+        LOGFMT_INFO(g_logger, "SpkMdlStVecImpl::iter invoked.");
+        return this;
+    }
+    SpkMdlSt* next(){
+        LOGFMT_INFO(g_logger, "SpkMdlStVecImpl::next invoked.");
+        return NULL;
+    }
+private:
+    
+};
+
+static SpkMdlStVecImpl g_AllSmpVec;
 int InitDLL(int iPriority,
         int iThreadNum,
         int *pThreadCPUID,
@@ -50,7 +66,7 @@ int InitDLL(int iPriority,
     }
     g_iModuleID = iModuleID;
     g_ReportResult = func; 
-    g_AudizSess = new SessionStruct(g_AudizPath.c_str(), audiz_reportResult, audiz_getAllMdls);
+    g_AudizSess = new SessionStruct(g_AudizPath.c_str(), audiz_reportResult, &g_AllSmpVec);
     g_bInitialized = true;
     LOGI("InitDLL ioacas module is initialized successfully.");
     return 0;
@@ -140,9 +156,14 @@ extern "C" void notifyProjFinish(unsigned long pid)
 
 extern "C" bool isAllFinished()
 {
-    unsigned retm = g_AudizSess->queueUnfinishedProjNum();
+    unsigned retm = g_AudizSess->queryUnfinishedProjNum();
     if(retm != 0){
         return false;
     }
     return true;
+}
+
+extern "C" bool isConn2Server()
+{
+    return g_AudizSess->isConnected();
 }

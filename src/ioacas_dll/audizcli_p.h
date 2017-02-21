@@ -19,6 +19,12 @@
 
 typedef int (*AUDIZ_REPORTRESULTPROC)(Audiz_Result *pResult);
 typedef int (*AUDIZ_GETALLMDLSPROC)(struct SpkMdlSt **);
+struct SpkMdlStVec{
+    struct iterator{
+        virtual SpkMdlSt* next() =0;
+    };
+    virtual iterator *iter() =0;
+};
 
 /**
  * capsulate session working with servRec.
@@ -29,15 +35,20 @@ typedef int (*AUDIZ_GETALLMDLSPROC)(struct SpkMdlSt **);
  */
 class SessionStruct{
 public:
-    SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFunc, AUDIZ_GETALLMDLSPROC getModlsFunc);
+    SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFunc, SpkMdlStVec *getModlsFunc);
     ~SessionStruct();
     
     bool writeData(Audiz_WaveUnit* unit);
     bool writeSample(const char *name, char *buf, unsigned len);
     bool deleteSample(const char *name);
     bool queueSamples(std::vector<std::string> &smps);
-    unsigned queueUnfinishedProjNum();
-
+    unsigned queryUnfinishedProjNum();
+    bool isConnected(){
+        pthread_mutex_lock(&isRunLock);
+        bool ret = bConnected;
+        pthread_mutex_lock(&isRunLock);
+        return ret;
+    }
     friend void* maintainSession_ex(void* param);
     ////////////////data part//////////////////
 private:
@@ -52,16 +63,22 @@ private:
         pthread_mutex_unlock(&isRunLock);
         return retb;
     }
-    void closeDataLink();
-    void closeModlLink();
-    bool checkModlFd();
-    bool checkDataFd();
     void setIsRun(bool val){
         pthread_mutex_lock(&isRunLock);
         isRunning = val;
         pthread_mutex_unlock(&isRunLock);
     }
-    int prochandleResp();
+    void setConnected(bool val){
+        pthread_mutex_lock(&isRunLock);
+        bConnected = val;
+        pthread_mutex_unlock(&isRunLock);
+    }
+    void closeDataLink(int);
+    void closeModlLink(int);
+    int checkModlFd(bool btry);
+    int checkDataFd(bool btry);
+    bool prochandleResp(int fd);
+    bool prochandleDataResp(int fd);
     int procSendCfgCmd();
     int procExecCommonCfgCmd(std::vector<AZ_PckVec>& task, Audiz_PResult &result);
 
@@ -69,11 +86,13 @@ private:
     char servPath[MAX_PATH];
     bool isRunning;
     pthread_mutex_t isRunLock;
+    bool bConnected;
     pthread_t modlThreadId;
     AUDIZ_REPORTRESULTPROC repResAddr;
-    AUDIZ_GETALLMDLSPROC retMdlsAddr;
+    SpkMdlStVec* retMdlsAddr;
     int dataFd;
     int modlFd;
+    pthread_mutex_t modlFdLock;
     pthread_mutex_t dataFdLock;
     //pthread_mutex_t modlFdLock;
     //used to commit task to modl link.
@@ -82,7 +101,7 @@ private:
     pthread_cond_t cfgCmdTaskEmptyCond;
     std::vector<AZ_PckVec> cfgCmdTask;
     Audiz_PResult cfgCmdResult;
-    //used to send modl asanchronizely.
+    //used to send modl asynchronously.
     //list<SpkMdlData> allmdls;
 };
 

@@ -158,6 +158,9 @@ struct Audiz_PResult_Head{
 
 //used in p_client.
 struct Audiz_PResult{
+    Audiz_PResult(){
+        reset();
+    }
     Audiz_PResult_Head head;
     char *argBuf;
     //TODO redundant defination.
@@ -175,7 +178,7 @@ struct Audiz_PResult{
         else if(head.type == AZOP_REC_RESULT){
             return head.ack * sizeof(Audiz_Result);
         }
-        else if(head.type == AZOP_QUERY_PROJ){
+        else if(head.type == AZOP_QUERY_PROJ + 1){
             return 0;
         }
         else{

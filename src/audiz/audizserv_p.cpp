@@ -5,9 +5,11 @@
 	> Created Time: Thu 16 Feb 2017 07:28:42 AM EST
  ************************************************************************/
 
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 
+#include <cstdio>
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
@@ -192,6 +194,7 @@ static bool procModlReceived(int mdlFd)
 {
     Audiz_PRequest_Head reqhd;
     vector<AZ_PckVec> pcks;
+    reqhd.pack_r(pcks);
     int err;
     size_t retr = readn(mdlFd, pcks, &err, 0);
     if(err < 0){
@@ -297,8 +300,8 @@ bool procImplAcceptLink(int servfd)
             strcpy(res.ack, AZ_LINKBUILDOK);
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
-            //TODO data link should non block.
-
+            //data link should be nonblocking.
+            set_fl(tmpfd, O_NONBLOCK);
             if(errw <0) break;
             if(setDataFd(tmpfd, res.req.sid)){
                 bsucc = true;
@@ -374,7 +377,7 @@ void *servRec_loop(void *param)
                 }
             }
             short errbits = fdarr[curidx].revents & (POLLERR | POLLHUP | POLLNVAL);
-            if(errbits){
+            if(!bclose && errbits){
                 LOG4CPLUS_ERROR(g_logger, "the modl link is broken while polling, fd: "<< fdarr[curidx].fd<< "; errbits: "<< errbits<< ".");
                 bclose = true;
             }
@@ -392,7 +395,7 @@ void *servRec_loop(void *param)
                 } 
             }
             short errbits = fdarr[curidx].revents & (POLLERR | POLLHUP | POLLNVAL);
-            if(errbits){
+            if(!bclose && errbits){
                 LOG4CPLUS_ERROR(g_logger, "the data link is broken while polling, fd: "<< fdarr[curidx].fd<< "; errbits: "<< errbits<< ".");
                 bclose = true;
             }
