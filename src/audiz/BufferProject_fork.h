@@ -11,4 +11,5 @@
 bool recvProjSegment(unsigned long int id, char *data, unsigned len);
 void notifyProjFinish(unsigned long int pid);
 unsigned queryProjNum();
+
 #endif

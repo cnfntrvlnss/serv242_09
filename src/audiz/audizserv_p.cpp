@@ -19,14 +19,8 @@ using namespace std;
 #include "BufferProject_fork.h"
 #include "../audizstruct.h"
 #include "../apueclient.h"
+#include "globalfunc.h"
 
-#ifndef LOG4CPLUS
-#define LOG4CPLUS_ERROR(x, ...) cerr<< __VA_ARGS__ << endl;
-#define LOG4CPLUS_WARN(x, ...) cerr<< __VA_ARGS__ << endl;
-#define LOG4CPLUS_INFO(x, ...) cerr<< __VA_ARGS__ << endl;
-#define LOG4CPLUS_DEBUG(x, ...) cerr<< __VA_ARGS__ << endl;
-
-#endif
 unsigned long g_SessID = 0;
 int g_DataFd = -1;
 int g_ModlFd = -1;
@@ -206,6 +200,7 @@ static bool procModlReceived(int mdlFd)
     }
 
     if(reqhd.type == AZOP_QUERY_SAMPLE){
+        //TODO response with head of all samples.
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_QUERY_SAMPLE + 1;
         reshd.ack = 0;
@@ -222,6 +217,7 @@ static bool procModlReceived(int mdlFd)
         }
     }
     else if(reqhd.type == AZOP_ADD_SAMPLE){
+        //TODO add/del sample.
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_ADD_SAMPLE + 1;
         reshd.ack = 0;
