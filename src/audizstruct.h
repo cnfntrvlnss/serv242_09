@@ -12,7 +12,7 @@
 #include <cstring>
 #include <vector>
 
-typedef long int int64_t;
+typedef long int uint64_t;
 typedef int int32_t;
 
 #include "audizcomm.h"
@@ -20,7 +20,7 @@ typedef int int32_t;
 static const unsigned DATAREDUNSIZE = 8;
 const static char dataRedunArr[] = {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7};
 struct Audiz_WaveUnit{
-    int64_t m_iPCBID; //节目ID, 长度8字节
+    uint64_t m_iPCBID; //节目ID, 长度8字节
     int32_t m_iDataLen;//数据字节长度
     char *m_pData;//数据缓冲区
     void *m_pPCB;
