@@ -9,6 +9,7 @@
 #include <sys/time.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <unistd.h>
 
 #include <cassert>
 #include <cerrno>
@@ -181,7 +182,7 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
     if(m_vecAllSegs.size() > 0){
         unsigned unitidx = m_vecAllSegs.size() - 1;
         unsigned offset = m_vecAllSegs[unitidx].len;
-        if(unitidx > ceilUnitIdx || unitidx == ceilUnitIdx && offset >= ceilOffset){
+        if(unitidx > ceilUnitIdx || (unitidx == ceilUnitIdx && offset >= ceilOffset)){
             if(!bFull){
                 setFull();
                 err = 1;
@@ -196,41 +197,72 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
 //////////////////////////////////projects' pool/////////////////////
 
 struct ProjectCheckBook{
-    ProjectCheckBook(Project* p, int c):
+    explicit ProjectCheckBook(Project* p=NULL, int c=0):
         prj(p), refcnt(c), bfull(false)
     { 
-        checkedtime.tv_sec = 0;
-        checkedtime.tv_usec =0;
+        expiredtime.tv_sec = 0;
+        expiredtime.tv_nsec =0;
     }
     Project *prj;
     int refcnt;
     bool bfull;
-    struct timeval checkedtime;
+    struct timespec expiredtime;
 };
 
 LockHelper g_ProjPoolLock;
 static map<uint64_t, ProjectCheckBook> g_mProjPool;
-//static vector<ProjectConsumer*> g_vecConsumers;
-static map<ProjectConsumer*, set<uint64_t> > g_mapConsumeProjs;
+static map<ProjectConsumer*, set<uint64_t> > g_mConsumeProjs;
+static LockHelper g_RmAddConsumeMapLock;
 
+static pthread_t g_PoolThrdId;
+static bool g_bPoolThrdRun = true;
+static pthread_mutex_t g_PoolRunLock = PTHREAD_MUTEX_INITIALIZER;
+//projs full, but not refered.
 static list<uint64_t> g_liNewFullProjs;
 static pthread_mutex_t g_NewFullLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_NewFullCond = PTHREAD_COND_INITIALIZER;
 
+static void *poolPollThread(void *param);
+
+static inline void setPoolThrdRun()
+{
+    pthread_mutex_lock(&g_PoolRunLock);
+    g_bPoolThrdRun = false;
+    pthread_mutex_unlock(&g_PoolRunLock);
+}
+static inline bool getPoolThrdRun()
+{
+    pthread_mutex_lock(&g_PoolRunLock);
+    bool ret = g_bPoolThrdRun;
+    pthread_mutex_unlock(&g_PoolRunLock);
+    return ret;
+}
+
 bool initProjPool()
 {
     initShmSegPool();
+    int retp = pthread_create(&g_PoolThrdId, NULL, poolPollThread, NULL);
+    if(retp != 0){
+        LOG4CPLUS_ERROR(g_logger, "initProjPool failed to create thread poolPollThread.");
+        exit(1);
+    }
+    return true;
 }
 
 void rlseProjPool()
 {
+    //TODO make sure no project turn false.
+
+    setPoolThrdRun();
+    pthread_join(g_PoolThrdId, NULL);
+
     AutoLock l(g_ProjPoolLock);
-    //do preceding work to free project buffers 
+    //TODO make sure all send projectes are confirmed.
+    //by making value part of g_mConsumeProjs is empty, or refcnt in g_mProjPool is zero.
     while(g_mProjPool.begin() != g_mProjPool.end()){
         ProjectCheckBook &cur = g_mProjPool.begin()->second;
-        //TODO make sure no reference to prj exists.
         while(cur.refcnt != 0){
-            
+         sleep(1);   
         }
         delete cur.prj;
         g_mProjPool.erase(g_mProjPool.begin());
@@ -244,7 +276,7 @@ bool recvProjSegment(uint64_t pid, char *data, unsigned len)
 {
     g_ProjPoolLock.lock();
     if(g_mProjPool.find(pid) == g_mProjPool.end()){
-        g_mProjPool[pid] = ProjectCheckBook(new Project(pid), 0);
+        g_mProjPool[pid] = ProjectCheckBook(new Project(pid));
     }   
     ProjectCheckBook& cur = g_mProjPool[pid];
     g_ProjPoolLock.unLock();
@@ -271,14 +303,17 @@ void notifyProjFinish(unsigned long int pid)
         g_ProjPoolLock.unLock();
         return;
     }
-    it->second.prj->setFinished();
-    g_mProjPool[pid].bfull = true;
-    g_ProjPoolLock.unLock();
-    //inform monitor thread that Project is full.
-    pthread_mutex_lock(&g_NewFullLock);
-    g_liNewFullProjs.push_back(pid);
-    pthread_mutex_unlock(&g_NewFullLock);
-    pthread_cond_broadcast(&g_NewFullCond);
+
+    if(it->second.prj->setFinished()){
+        LOG4CPLUS_DEBUG(g_logger, "notifyProjFinish PID="<< pid<< " turn full as reaching eof.");
+        g_mProjPool[pid].bfull = true;
+        g_ProjPoolLock.unLock();
+        //inform monitor thread that Project is full.
+        pthread_mutex_lock(&g_NewFullLock);
+        g_liNewFullProjs.push_back(pid);
+        pthread_mutex_unlock(&g_NewFullLock);
+        pthread_cond_broadcast(&g_NewFullCond);
+    }
 }
 
 unsigned queryProjNum()
@@ -291,7 +326,7 @@ unsigned queryProjNum()
  * decrease refcnt of project in pool. and release project if refcnt == 0.
  * after PoolPollThread process the proj.
  */
-void delProjectRefer(uint64_t pid)
+static inline void delProjectRefer(uint64_t pid)
 {
     int &refcnt = g_mProjPool[pid].refcnt;
      refcnt--;
@@ -310,15 +345,19 @@ void delProjectRefer(uint64_t pid)
 void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
 {
     AutoLock l(g_ProjPoolLock);
-    if(g_mapConsumeProjs.find(this) == g_mapConsumeProjs.end()){
+    if(g_mConsumeProjs.find(this) == g_mConsumeProjs.end()){
         return;
     } 
-    set<uint64_t> &setprjs = g_mapConsumeProjs[this];
+    set<uint64_t> &setprjs = g_mConsumeProjs[this];
     if(setprjs.find(pid) == setprjs.end()){
         return;
     }
+    setprjs.erase(pid);
     
-    //TODO forward result to audizserver_p.
+    if(res != NULL){
+        //TODO forward result to audizserver_p.
+
+    }
 
     delProjectRefer(pid);
 }
@@ -329,30 +368,37 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
  */
 void addStream(ProjectConsumer *que)
 {
+    AutoLock ol(g_RmAddConsumeMapLock);
     AutoLock l(g_ProjPoolLock);
-    assert(g_mapConsumeProjs.find(que) == g_mapConsumeProjs.end());
-    g_mapConsumeProjs[que];
+    assert(g_mConsumeProjs.find(que) == g_mConsumeProjs.end());
+    g_mConsumeProjs[que];
 }
 
 void removeStream(ProjectConsumer *que)
 {
+    AutoLock ol(g_RmAddConsumeMapLock);
     AutoLock l(g_ProjPoolLock);
-    assert(g_mapConsumeProjs.find(que) != g_mapConsumeProjs.end());
-    set<uint64_t> &pids = g_mapConsumeProjs[que];
+    assert(g_mConsumeProjs.find(que) != g_mConsumeProjs.end());
+    set<uint64_t> &pids = g_mConsumeProjs[que];
     while(pids.size() > 0){
         uint64_t pid = *pids.begin();
         delProjectRefer(pid);
     }
-    g_mapConsumeProjs.erase(que);
+    g_mConsumeProjs.erase(que);
+}
+
+void sendProject2AllConsumers(unsigned pid)
+{
+
 }
 
 /**
  * monitor data growing of all projects, and do corresponding things on the occurrence of specified events. such as the project is full, new data suffice to do fixed-audio search.
  *
  */
-void *poolPoolThread(void *param)
+void *poolPollThread(void *param)
 {
-    while(true){
+    while(getPoolThrdRun()){
         list<uint64_t> fullPrjs;
         int waitsecs = 6;
         struct timeval curtime;
@@ -365,25 +411,67 @@ void *poolPoolThread(void *param)
             pthread_cond_timedwait(&g_NewFullCond, &g_NewFullLock, &abstime);
         }
         if(g_liNewFullProjs.size() > 0){
-            //TODO have some full projects.
             fullPrjs = g_liNewFullProjs;
             g_liNewFullProjs.clear();
         }
-        pthread_mutex_unlock(&g_NewFullLock);
-        while(fullPrjs.size() > 0){
-            uint64_t pid = fullPrjs.front();
-            g_ProjPoolLock.lock();
-
-            g_ProjPoolLock.unLock();
+        //check all projects for timeout ones.
+        for(map<uint64_t, ProjectCheckBook>::iterator it=g_mProjPool.begin(); it!=g_mProjPool.end(); it++){
+            if(it->second.bfull) continue;
+            struct timespec &expired = it->second.expiredtime;
+            if(expired.tv_sec > abstime.tv_sec) continue;
+            struct timeval nexttime;
+            struct timeval curtime;
+            curtime.tv_sec = abstime.tv_sec;
+            curtime.tv_usec = abstime.tv_nsec /1000;
+            if(it->second.prj->turnFullByTimeout(curtime, nexttime)){
+                LOG4CPLUS_DEBUG(g_logger, "poolPollThread PID="<< it->first<< " turn full for timeout.");
+                it->second.bfull = true;
+                fullPrjs.push_back(it->first);
+            }
+            else{
+                expired.tv_sec = nexttime.tv_sec;
+                expired.tv_nsec = nexttime.tv_usec * 1000;
+            }
         }
+        pthread_mutex_unlock(&g_NewFullLock);
 
-        g_ProjPoolLock.lock();
-        for()
-        g_ProjPoolLock.unLock();
+        list<Project*> curprjs;
 
-        //TODO check all projects for timeout ones.
-        for()
+        //consume full projects.
+        while(fullPrjs.size() > 0){
+            list<ProjectConsumer*> appendings;
+
+            g_ProjPoolLock.lock();
+            uint64_t pid = fullPrjs.front();
+            Project* prj = g_mProjPool[pid].prj;
+            curprjs.push_back(prj);
+            g_mProjPool[pid].refcnt ++;
+
+            for(map<ProjectConsumer*, set<uint64_t> >::iterator it = g_mConsumeProjs.begin(); it != g_mConsumeProjs.end(); it++){
+                it->second.insert(pid);
+                g_mProjPool[pid].refcnt ++;
+                appendings.push_back(it->first);
+            }
+            g_ProjPoolLock.unLock();
+
+            while(appendings.size() > 0){
+                //make sure the cumsomer is not removed.
+                AutoLock ol(g_RmAddConsumeMapLock);
+                if(!appendings.front()->sendProject(prj)){
+                    g_ProjPoolLock.lock();
+                    delProjectRefer(pid);
+                    g_ProjPoolLock.unLock();
+                }
+                appendings.pop_front();
+            }
+        }
+        
+        while(curprjs.size() > 0){
+            delProjectRefer(curprjs.front()->PID);
+            curprjs.pop_front();
+        }
     }
+    return NULL;
 }
 
 };//end audiz

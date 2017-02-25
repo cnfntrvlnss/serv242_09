@@ -16,6 +16,7 @@
 #include <list>
 
 typedef unsigned long uint64_t;//redefination, after cstdint.
+//const unsigned UINT_MAX = ;
 #include "../audizcomm.h"
 #include "../utilites.h"
 
@@ -68,7 +69,7 @@ public:
     void reset(){
         bFull = false;
         bFinished = false;
-        ceilUnitIdx = bufferConfig.waitLengh / BLOCKSIZE;
+        ceilUnitIdx = bufferConfig.waitLength / BLOCKSIZE;
         ceilOffset = bufferConfig.waitLength - ceilUnitIdx * BLOCKSIZE;
 
 
@@ -76,20 +77,40 @@ public:
     }
 
     void getData(std::vector<const ShmSegment*> &vec);   
-    bool recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmSegment*>& seg);
     bool recvData(uint64_t id, char *data, unsigned len, int &err);
-    void setFinished()
+    //return false if it already full.
+    bool setFinished()
     {
-        bFinished = true;
         AutoLock l(m_lock);
-        if(!bFull) setFull();
+        bFinished = true;
+        bool ret = false;
+        if(!bFull){
+            setFull();
+            ret = true;
+        }
+        return ret;
+    }
+    bool turnFullByTimeout(struct timeval curtime, struct timeval& nexttime){
+        AutoLock l(m_lock);
+        if(m_vecAllTimeRecords.size() == 0) return false;
+        nexttime.tv_sec = m_vecAllTimeRecords.front().time.tv_sec + bufferConfig.waitSeconds;
+        nexttime.tv_usec = 0;
+        unsigned tmpsec = m_vecAllTimeRecords.back().time.tv_usec + bufferConfig.waitSecondStep;
+        if(tmpsec < nexttime.tv_sec){
+            nexttime.tv_sec = tmpsec;
+        }
+        if(nexttime.tv_sec > curtime.tv_sec){
+            setFull();
+            return true;
+        }
+        return false;
     }
 
     uint64_t PID;
 
     struct BufferConfig{
         BufferConfig():
-            waitLength(60), waitSeconds(UINT_MAX), waitSecondStep(UINT_MAX)
+            waitLength(60), waitSeconds(UINT32_MAX), waitSecondStep(UINT32_MAX)
         {}
         unsigned waitLength;
         unsigned waitSeconds;
@@ -99,13 +120,14 @@ public:
 private:
     Project(const Project&);
     Project& operator=(const Project&);
+    
 
+    bool recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmSegment*>& seg);
     void setFull(){
             bFull = true;
             if(m_vecAllTimeRecords.size() > 0) fullRecord = m_vecAllTimeRecords.back();
     }
 
-    //const struct timeval ZEROTIME = {0, 0};
     struct ArrivalRecord{
         explicit ArrivalRecord(struct timeval val = {0, 0}, unsigned idx=0, unsigned jdx=0, unsigned lost = 0):
             time(val), segidx(idx), end(jdx), lostsize(lost)
@@ -129,7 +151,7 @@ private:
 
 class ProjectConsumer{
 public:
-    virtual void sendProject(Project *proj) =0;
+    virtual bool sendProject(Project *proj) =0;
     void confirm(uint64_t pid, Audiz_Result *res);
 };
 
@@ -142,6 +164,7 @@ void rlseProjPool();
 bool recvProjSegment(uint64_t id, char *data, unsigned len);
 void notifyProjFinish(unsigned long int pid);
 unsigned queryProjNum();
+
 };
 
 #endif
