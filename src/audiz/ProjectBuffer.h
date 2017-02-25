@@ -41,15 +41,16 @@ struct ShmSegment{
     }
 };
 
-char * ShmSeg_get(const ShmSegment *seg, unsigned offset)
+static char * ShmSeg_get(const ShmSegment *seg, unsigned offset)
 {
     return g_ShmStartPtr + seg->offset + offset;
 }
 
-void ShmSeg_copy(const ShmSegment* seg, unsigned offset, char *data, unsigned len)
+static void ShmSeg_copy(const ShmSegment* seg, unsigned offset, char *data, unsigned len)
 {
     memcpy(ShmSeg_get(seg, offset), data, len);
 }
+
 
 class Project{
 public:
@@ -72,11 +73,13 @@ public:
         ceilUnitIdx = bufferConfig.waitLength / BLOCKSIZE;
         ceilOffset = bufferConfig.waitLength - ceilUnitIdx * BLOCKSIZE;
 
-
-
     }
 
-    void getData(std::vector<const ShmSegment*> &vec);   
+    void getData(std::vector<Segment> &vec){
+        AutoLock l(m_lock);
+        vec.clear();
+        vec.insert(vec.end(), m_vecAllSegs.begin(), m_vecAllSegs.end());
+    }
     bool recvData(uint64_t id, char *data, unsigned len, int &err);
     //return false if it already full.
     bool setFinished()

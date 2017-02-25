@@ -208,7 +208,7 @@ bool SessionStruct::prochandleResp(int fd)
                 unsigned reslen = arglen / sizeof(Audiz_Result);
                 Audiz_Result *ress = reinterpret_cast<Audiz_Result*>(argPck.base);
                 for(unsigned idx=0; idx < reslen; idx++){
-                    BLOGT("Project Result from modl. PID=%lu TargetID=%u.", ress[idx].m_Proj.m_iPCBID, ress[idx].m_iTargetID);
+                    BLOGT("Project Result from modl. PID=%lu TargetID=%u.", ress[idx].m_iPCBID, ress[idx].m_iTargetID);
                     repResAddr(&ress[idx]);
                     
                 }

@@ -14,13 +14,14 @@
 #include <cstring>
 #include <cstdlib>
 #include<iostream>
-using namespace std;
 
-#include "BufferProject_fork.h"
+#include "ProjectBuffer.h"
 #include "../audizstruct.h"
 #include "../apueclient.h"
 #include "globalfunc.h"
 
+using namespace std;
+using namespace audiz;
 unsigned long g_SessID = 0;
 int g_DataFd = -1;
 int g_ModlFd = -1;
@@ -106,6 +107,22 @@ static inline size_t writen_s(int fd, AZ_PckVec* pcks, unsigned len, int *err, i
     size_t retw = writen(fd, reinterpret_cast<PckVec*>(pcks), len, err, istry);
     pthread_mutex_unlock(&g_ModlFdLock);
     return retw;
+}
+
+void reportAudiz_Result(const Audiz_Result& res)
+{
+    Audiz_PResult_Head reshd;
+    reshd.type = AZOP_REC_RESULT;
+    reshd.ack = 1;
+    vector<AZ_PckVec> pcks;
+    reshd.pack_w(pcks);
+    pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<Audiz_Result*>(&res)), sizeof(Audiz_Result)));
+    
+    int err;
+    writen_s(g_ModlFd, &pcks[0], pcks.size(), &err, 0);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "reportAudiz_Result error occurs while write result to modl link.");
+    }
 }
 
 static bool parseSpkMdlName(char *tmpBuf, unsigned tok1, unsigned tok2, unsigned tok3)
@@ -319,7 +336,7 @@ bool procImplAcceptLink(int servfd)
  * accept new client link from serv link, place the link in right place.
  *
  */
-void *servRec_loop(void *param)
+void *servtask_loop(void *param)
 {
     const char *unPath = AZ_DATACENTER;
     int servfd = serv_listen(unPath);
@@ -403,7 +420,23 @@ void *servRec_loop(void *param)
     return NULL;
 }
 
+
 #define handle_error(x, msg) do{perror(msg); exit(EXIT_FAILURE);} while(0)
+static pthread_t servThrdId;
+void startServTask()
+{
+    int retp = pthread_create(&servThrdId, NULL, servtask_loop, NULL);
+    if(retp !=0 ){
+        handle_error(retp ,"pthread_create");
+    }
+}
+void endServTask()
+{
+    pthread_cancel(servThrdId);
+    pthread_join(servThrdId, NULL);
+}
+
+#if 0
 int main(int argc, char* argv[])
 {
     pthread_t servThrdId;
@@ -416,112 +449,4 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-/*
-
-void *onlineConsume_loop(void *param)
-{
-    struct pollfd fdarr[2];
-    while(true){
-        pthread_mutex_lock(&g_DtMdFdLock);
-        while(g_DataFd == 0 || g_ModlFd== 0){
-            pthread_cond_wait(&g_DtMdFdCond, &g_DtMdFdLock);
-        }
-        fdarr[0].fd = g_DataFd;
-        fdarr[0].events = POLLIN;
-        fdarr[1].fd = g_ModlFd;
-        fdarr[1].events = POLLIN;
-        pthread_mutex_unlock(&g_DtMdFdLock);
-
-        while(true){
-            int retpoll = poll(fdarr, 2, -1);
-            if(retpoll <= 0){
-                if(retpoll == 0){
-                    LOG4CPLUS_WARN(g_logger, "poll returns with no fd ready and no error happening.");
-                    continue;
-                }
-                else{
-                    LOG4CPLUS_WARN(g_logger, "poll returns with error happening, choosing to resume the call of poll.");
-                    continue;
-                }
-            }
-            if(fdarr[0].revents != 0){
-                bool bclose = false;
-                if(fdarr[0].revents & POLLIN ){
-                    if(!procDataReceived(fdarr[0].fd)){
-                        bclose = true;
-                    } 
-                }
-                short errbits = fdarr[0].revents & (POLLERR | POLLHUP | POLLNVAL);
-                if(errbits){
-                    LOG4CPLUS_ERROR(g_logger, "the data link is broken while polling, fd: "<< fdarr[0].fd<< "; errbits: "<< errbits<< ".");
-                    bclose = true;
-                }
-                if(bclose){
-                    clearDataFd(fdarr[0].fd);
-                }
-            }
-            if(fdarr[1].revents != 0){
-                bool bclose = false;
-                if(fdarr[1].revents & POLLIN ) {
-                    if(!procModlReceived(fdarr[1].fd)){
-                        bclose = true;   
-                    }
-                }
-                short errbits1 = fdarr[1].revents & (POLLERR | POLLHUP | POLLNVAL);
-                if(errbits1){
-                    LOG4CPLUS_ERROR(g_logger, "the modl link is broken while polling, fd: "<< fdarr[0].fd<< "; errbits: "<< errbits1<< ".");
-                    bclose = true;
-                }
-                if(bclose){
-                    clearModlFd(fdarr[1].fd);
-                }
-            }
-        }
-    }
-}
-void checkFdAndCloseBroken(int &curfd, pthread_mutex_t &curlock)
-{
-    pthread_mutex_lock(&curlock);
-    struct pollfd fdarr[1];
-    fdarr[0].fd = curfd;
-    fdarr[0].events = POLLIN;
-    poll(fdarr, 1, 0);
-    if(fdarr[0].revents & (POLLERR | POLLHUP)){
-        LOG4CPLUS_INFO_FMT(g_logger, "the current fd is broken through checking by poll, and needs to close, fd: %d.", curfd);
-        close(curfd);
-        curfd = 0;
-    }
-    else{
-        LOG4CPLUS_WARN_FMT(g_logger, "the current fd is checked ok, and does not need to close, fd: %d", curfd);
-    }
-    pthread_mutex_unlock(&curlock);
-}
-bool establishDataLink(int clifd)
-{
-    const char *rspStr = "READY";
-    unsigned rspLen = 5;
-    int retw = write(clifd, rspStr, rspLen);
-    if(retw != rspLen){
-        fprintf(stderr, "error occures while write 'OK' to data link.\n");
-        return false;
-    }
-    if(shutdown(clifd, SHUT_WR) == -1){
-        fprintf(stderr, "fail to shutdown writing endpoint of data link, error: %s.\n", strerror(errno));
-    }
-    return true;
-}
-bool establishModelLink(int clifd)
-{
-    const char *rspStr = "READY";
-    unsigned rspLen = 5;
-    int retw = write(clifd, rspStr, rspLen);
-    if(retw != rspLen){
-        fprintf(stderr, "error occures while write 'OK' to model link.\n");
-        return false;
-    }
-    if(shutdown(clifd, SHUT_WR) == -1){
-        fprintf(stderr, "fail to shutdown writing endpoint of model link, error: %s.\n", strerror(errno));
-    }
-    return true;
-}
-*/
+#endif

@@ -13,7 +13,7 @@ TESTDIR=../test/ioacases/
 
 VPATH=../src/:../src/audiz/
 
-CPPNAMES:= audizserv_p.cpp BufferProject_fork.cpp
+CPPNAMES:= audizserv_p.cpp recMain.cpp ProjectBuffer.cpp globalfunc.cpp utilites.cpp
 CPPNAMES +=
 CPPNAMES +=
 CPPNAMES+=
@@ -23,7 +23,7 @@ LDLIBS +=
 LDFLAGS += -lpthread 
 CFLAGS +=
 ifneq (${CONF},Debug)
-	CFLAGS+= -O2 -Wall
+	CFLAGS+= -std=c++11 -O2 -Wall
 else
-	CFLAGS+= -g -Wall
+	CFLAGS+= -std=c++11 -g -Wall
 endif

@@ -8,12 +8,12 @@
 #ifndef _AUDIZSTRUCT_H
 #define _AUDIZSTRUCT_H
 
-//#include <cstdint>
+#include <cstdint>
 #include <cstring>
 #include <vector>
 
-typedef long int uint64_t;
-typedef int int32_t;
+//typedef long int uint64_t;
+//typedef int int32_t;
 
 #include "audizcomm.h"
 

@@ -21,7 +21,13 @@
 
 #include "globalfunc.h"
 
+//from audizserv_p.cpp
+void reportAudiz_Result(const Audiz_Result& res);
+void startServTask();
+void endServTask();
+
 using namespace std;
+
 
 namespace audiz{
 
@@ -111,6 +117,8 @@ void ShmSeg_relse(const ShmSegment *ele)
 
 
 /////////////////////////////project impliment///////////////////
+
+Project::BufferConfig Project::bufferConfig;
 /**
  * consider the conidtion that segs do not contain suffice segment to 
  * hold new arrival data.
@@ -240,6 +248,7 @@ static inline bool getPoolThrdRun()
 
 bool initProjPool()
 {
+    startServTask();
     initShmSegPool();
     int retp = pthread_create(&g_PoolThrdId, NULL, poolPollThread, NULL);
     if(retp != 0){
@@ -251,6 +260,7 @@ bool initProjPool()
 
 void rlseProjPool()
 {
+    endServTask();
     //TODO make sure no project turn false.
 
     setPoolThrdRun();
@@ -355,8 +365,8 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
     setprjs.erase(pid);
     
     if(res != NULL){
-        //TODO forward result to audizserver_p.
-
+        //forward result to audizserver_p.
+        reportAudiz_Result(*res);
     }
 
     delProjectRefer(pid);
