@@ -1,6 +1,6 @@
 
 export
-.PHONY: build09 buildZP buildall
+.PHONY: build09 buildSv buildall
 
 buildall: build09 buildSv
 build09:

@@ -4,8 +4,8 @@ CXX=g++
 
 CND_PLATFORM=Intel-Linux-x86
 CONF=Debug
-CND_DISTDIR=dist09
-CND_BUILDDIR=build09
+CND_DISTDIR=distSv
+CND_BUILDDIR=buildSv
 OBJDIR=${CND_BUILDDIR}/${CONF}/${CND_PLATFORM}/
 DISTDIR := ${CND_DISTDIR}/${CONF}/${CND_PLATFORM}/
 MODE=Test
@@ -20,10 +20,10 @@ CPPNAMES+=
 CNAMES:= apueclient.c
 PROGNAME=recMain
 LDLIBS +=
-LDFLAGS += -lpthread 
-CFLAGS +=
+LDFLAGS += -lpthread -L/usr/local/lib64 -llog4cplus 
+CFLAGS +=-std=c++11 
 ifneq (${CONF},Debug)
-	CFLAGS+= -std=c++11 -O2 -Wall
+	CFLAGS+= -O2 -Wall
 else
-	CFLAGS+= -std=c++11 -g -Wall
+	CFLAGS+= -g -Wall
 endif

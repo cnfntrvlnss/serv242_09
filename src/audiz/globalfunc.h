@@ -8,7 +8,14 @@
 #ifndef _GLOBALFUNC_H
 #define _GLOBALFUNC_H
 
-#ifndef LOG4CPLUS
+#include <log4cplus/logger.h>
+#include <log4cplus/configurator.h>
+#include <log4cplus/loggingmacros.h>
+
+extern log4cplus::Logger g_logger;
+
+
+#if 0
 #define LOG4CPLUS_ERROR(x, ...) std::cerr<< __VA_ARGS__ << endl;
 #define LOG4CPLUS_WARN(x, ...) std::cerr<< __VA_ARGS__ << endl;
 #define LOG4CPLUS_INFO(x, ...) std::cerr<< __VA_ARGS__ << endl;

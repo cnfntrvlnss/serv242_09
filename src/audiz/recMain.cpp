@@ -11,6 +11,7 @@
 #include<iostream>
 #include <string>
 
+#include "globalfunc.h"
 #include "ProjectBuffer.h"
 
 using namespace audiz;
@@ -45,8 +46,11 @@ bool ProjectConsumerImpl::sendProject(Project* prj)
     return true;
 }
 
+using namespace log4cplus;
 int main()
 {
+    PropertyConfigurator::doConfigure("log4cplus.ini");
+
     initProjPool();
     ProjectConsumerImpl con;
     addStream(&con);
