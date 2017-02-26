@@ -18,10 +18,11 @@ using namespace std;
 
 string g_strSaveDir = "tmpData/";
 class ProjectConsumerImpl: public ProjectConsumer{
-    bool SendProject(Project* prj);
+public:
+    bool sendProject(Project* prj);
 };
 
-bool ProjectConsumerImpl::SendProject(Project* prj)
+bool ProjectConsumerImpl::sendProject(Project* prj)
 {
    char filepath[512];
     sprintf(filepath, "%s%lu.wav", g_strSaveDir.c_str(), prj->PID);
@@ -38,16 +39,19 @@ bool ProjectConsumerImpl::SendProject(Project* prj)
         char *stptr = ShmSeg_get(seg, 0);
         fwrite(stptr, 1, len, fp);
     }
+    fclose(fp);
+    sprintf(filepath, "ProjectconsumerImpl::sendProject PID=%lu have write data to file %s\n", prj->PID, filepath);
+    this->confirm(prj->PID, NULL);
     return true;
 }
 
 int main()
 {
     initProjPool();
-    ProjectConsumer* con;
-    addStream(con);
+    ProjectConsumerImpl con;
+    addStream(&con);
     sleep(INT32_MAX);
-    removeStream(con);
+    removeStream(&con);
     rlseProjPool();
     return 0;
 }

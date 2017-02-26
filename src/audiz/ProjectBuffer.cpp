@@ -1,9 +1,9 @@
 /*************************************************************************
-	> File Name: ProjectBuffer.cpp
-	> Author: 
-	> Mail: 
-	> Created Time: Wed 22 Feb 2017 06:40:49 AM EST
- ************************************************************************/
+> File Name: ProjectBuffer.cpp
+> Author: 
+> Mail: 
+> Created Time: Wed 22 Feb 2017 06:40:49 AM EST
+************************************************************************/
 #include "ProjectBuffer.h"
 
 #include <sys/time.h>
@@ -22,9 +22,9 @@
 #include "globalfunc.h"
 
 //from audizserv_p.cpp
-void reportAudiz_Result(const Audiz_Result& res);
-void startServTask();
-void endServTask();
+extern void reportAudiz_Result(const Audiz_Result& res);
+extern void startServTask();
+extern void endServTask();
 
 using namespace std;
 
@@ -58,7 +58,7 @@ static void initShmSegPool()
     memcpy(g_ShmStartPtr, "\x01", 1);
     g_ShmSegNum = g_uShmSize / BLOCKSIZE;
     g_ShmSegArr = (ShmSegment *)malloc(sizeof(ShmSegment) * g_ShmSegNum);
-    
+
     for(unsigned idx=0; idx < g_ShmSegNum; idx++){
         g_ShmSegArr[idx].set(0, idx * BLOCKSIZE);
     }
@@ -69,11 +69,11 @@ static void initShmSegPool()
 
 static void rlseShmSegPool()
 {
-    free(g_ShmSegArr);
-    g_ShmSegArr = NULL;
     assert(g_AllFreeSegs.size() == g_ShmSegNum);
     g_AllFreeSegs.clear();
-    
+    free(g_ShmSegArr);
+    g_ShmSegArr = NULL;
+
     if(shmdt(g_ShmStartPtr) == -1){
         LOG4CPLUS_ERROR(g_logger, "rlseShmSegPool shmdt failed. error: "<< strerror(errno));
     }
@@ -87,7 +87,7 @@ const ShmSegment* ShmSeg_alloc(const ShmSegment *stptr)
     const ShmSegment *ret;
     set<unsigned>::iterator it;
     if(stptr == NULL){
-         it = g_AllFreeSegs.begin();
+        it = g_AllFreeSegs.begin();
         ret = &g_ShmSegArr[*it];
         g_AllFreeSegs.erase(it);
         return ret;
@@ -110,7 +110,7 @@ const ShmSegment* ShmSeg_alloc(const ShmSegment *stptr)
 
 void ShmSeg_relse(const ShmSegment *ele)
 {
-     unsigned st = (ele - g_ShmSegArr) / sizeof(ShmSegment);
+    unsigned st = (ele - g_ShmSegArr) / sizeof(ShmSegment);
     assert(st < g_ShmSegNum);
     g_AllFreeSegs.insert(st);
 }
@@ -120,10 +120,10 @@ void ShmSeg_relse(const ShmSegment *ele)
 
 Project::BufferConfig Project::bufferConfig;
 /**
- * consider the conidtion that segs do not contain suffice segment to 
- * hold new arrival data.
- *
- */
+* consider the conidtion that segs do not contain suffice segment to 
+* hold new arrival data.
+*
+*/
 bool Project::recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmSegment*>& segs)
 {
     LOG4CPLUS_DEBUG(g_logger, "Project::recvData start... id="<< id<< "; len="<< len);
@@ -166,9 +166,9 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, std::vector<const 
 }
 
 /**
- *
- * return err = 1 when it turns full.
- */
+*
+* return err = 1 when it turns full.
+*/
 bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
 {
     err = 0;
@@ -185,6 +185,7 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
         seg = ShmSeg_alloc(seg);
         if(seg == NULL) break;
         segs.push_back(seg);
+        rem -= BLOCKSIZE;
     }
     recvData(id, data, len, segs);
     if(m_vecAllSegs.size() > 0){
@@ -198,7 +199,7 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
             }
         }
     }
-    
+
     return 0;
 }
 
@@ -206,7 +207,7 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
 
 struct ProjectCheckBook{
     explicit ProjectCheckBook(Project* p=NULL, int c=0):
-        prj(p), refcnt(c), bfull(false)
+    prj(p), refcnt(c), bfull(false)
     { 
         expiredtime.tv_sec = 0;
         expiredtime.tv_nsec =0;
@@ -272,7 +273,7 @@ void rlseProjPool()
     while(g_mProjPool.begin() != g_mProjPool.end()){
         ProjectCheckBook &cur = g_mProjPool.begin()->second;
         while(cur.refcnt != 0){
-         sleep(1);   
+            sleep(1);   
         }
         delete cur.prj;
         g_mProjPool.erase(g_mProjPool.begin());
@@ -333,14 +334,14 @@ unsigned queryProjNum()
 }
 
 /**
- * decrease refcnt of project in pool. and release project if refcnt == 0.
- * after PoolPollThread process the proj.
- */
+* decrease refcnt of project in pool. and release project if refcnt == 0.
+* after PoolPollThread process the proj.
+*/
 static inline void delProjectRefer(uint64_t pid)
 {
     int &refcnt = g_mProjPool[pid].refcnt;
-     refcnt--;
-    assert(refcnt < 0);
+    assert(refcnt > 0);
+    refcnt--;
     if(refcnt == 0){
         delete g_mProjPool[pid].prj;
         g_mProjPool.erase(pid);
@@ -348,10 +349,10 @@ static inline void delProjectRefer(uint64_t pid)
 }
 
 /**
- * if the stream is not registered, or project isnot waiting for result,
- * just ignore the result.
- *
- */
+* if the stream is not registered, or project isnot waiting for result,
+* just ignore the result.
+*
+*/
 void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
 {
     AutoLock l(g_ProjPoolLock);
@@ -363,7 +364,7 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
         return;
     }
     setprjs.erase(pid);
-    
+
     if(res != NULL){
         //forward result to audizserver_p.
         reportAudiz_Result(*res);
@@ -373,9 +374,9 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
 }
 
 /**
- * TODO try to add full projects to the new stream.
- *
- */
+* TODO try to add full projects to the new stream.
+*
+*/
 void addStream(ProjectConsumer *que)
 {
     AutoLock ol(g_RmAddConsumeMapLock);
@@ -403,9 +404,9 @@ void sendProject2AllConsumers(unsigned pid)
 }
 
 /**
- * monitor data growing of all projects, and do corresponding things on the occurrence of specified events. such as the project is full, new data suffice to do fixed-audio search.
- *
- */
+* monitor data growing of all projects, and do corresponding things on the occurrence of specified events. such as the project is full, new data suffice to do fixed-audio search.
+*
+*/
 void *poolPollThread(void *param)
 {
     while(getPoolThrdRun()){
@@ -474,14 +475,15 @@ void *poolPollThread(void *param)
                 }
                 appendings.pop_front();
             }
+            fullPrjs.pop_front();
         }
-        
+
         while(curprjs.size() > 0){
             delProjectRefer(curprjs.front()->PID);
             curprjs.pop_front();
         }
     }
-    return NULL;
+        return NULL;
 }
 
 };//end audiz

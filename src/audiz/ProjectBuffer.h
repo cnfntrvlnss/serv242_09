@@ -113,7 +113,7 @@ public:
 
     struct BufferConfig{
         BufferConfig():
-            waitLength(60), waitSeconds(UINT32_MAX), waitSecondStep(UINT32_MAX)
+            waitLength(UINT32_MAX), waitSeconds(UINT32_MAX), waitSecondStep(60)
         {}
         unsigned waitLength;
         unsigned waitSeconds;
