@@ -22,12 +22,10 @@
 #include "globalfunc.h"
 
 //from audizserv_p.cpp
-extern void reportAudiz_Result(const Audiz_Result& res);
 extern void startServTask();
 extern void endServTask();
 
 using namespace std;
-
 
 namespace audiz{
 
@@ -37,7 +35,7 @@ int g_iFtokId = 0;
 int g_iShmId;
 char *g_ShmStartPtr = NULL;
 set<unsigned> g_AllFreeSegs;//sorted by less than
-ShmSegment *g_ShmSegArr;
+ShmBlock *g_ShmSegArr;
 unsigned g_ShmSegNum;
 const unsigned uShmCapicity = 2 * 1024 * 1024 * 1024L;
 const unsigned g_uShmSize = (uShmCapicity / BLOCKSIZE ) * BLOCKSIZE;
@@ -57,7 +55,7 @@ static void initShmSegPool()
     g_ShmStartPtr = (char*)shmat(g_iFtokId, 0, SHM_RND);
     memcpy(g_ShmStartPtr, "\x01", 1);
     g_ShmSegNum = g_uShmSize / BLOCKSIZE;
-    g_ShmSegArr = (ShmSegment *)malloc(sizeof(ShmSegment) * g_ShmSegNum);
+    g_ShmSegArr = (ShmBlock *)malloc(sizeof(ShmBlock) * g_ShmSegNum);
 
     for(unsigned idx=0; idx < g_ShmSegNum; idx++){
         g_ShmSegArr[idx].set(0, idx * BLOCKSIZE);
@@ -82,9 +80,9 @@ static void rlseShmSegPool()
     }
 }
 
-const ShmSegment* ShmSeg_alloc(const ShmSegment *stptr)
+const ShmBlock* ShmSeg_alloc(const ShmBlock *stptr)
 {
-    const ShmSegment *ret;
+    const ShmBlock *ret;
     set<unsigned>::iterator it;
     if(stptr == NULL){
         it = g_AllFreeSegs.begin();
@@ -92,7 +90,7 @@ const ShmSegment* ShmSeg_alloc(const ShmSegment *stptr)
         g_AllFreeSegs.erase(it);
         return ret;
     }
-    unsigned st = (stptr - g_ShmSegArr) / sizeof(ShmSegment);
+    unsigned st = (stptr - g_ShmSegArr) / sizeof(ShmBlock);
     assert( st < g_ShmSegNum );
     it = g_AllFreeSegs.lower_bound(st);
     if(it == g_AllFreeSegs.end()){
@@ -108,9 +106,9 @@ const ShmSegment* ShmSeg_alloc(const ShmSegment *stptr)
     return ret;
 }
 
-void ShmSeg_relse(const ShmSegment *ele)
+void ShmSeg_relse(const ShmBlock *ele)
 {
-    unsigned st = (ele - g_ShmSegArr) / sizeof(ShmSegment);
+    unsigned st = (ele - g_ShmSegArr) / sizeof(ShmBlock);
     assert(st < g_ShmSegNum);
     g_AllFreeSegs.insert(st);
 }
@@ -124,7 +122,7 @@ Project::BufferConfig Project::bufferConfig;
 * hold new arrival data.
 *
 */
-bool Project::recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmSegment*>& segs)
+bool Project::recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmBlock*>& segs)
 {
     LOG4CPLUS_DEBUG(g_logger, "Project::recvData start... id="<< id<< "; len="<< len);
     assert(id == this->PID);
@@ -132,13 +130,13 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, std::vector<const 
     unsigned freeidx = 0;
     while(rem != 0){
         long int leftsize = 0;
-        Segment *pseg;
+        ShmSegment *pseg;
         if(m_vecAllSegs.size() > 0){
             pseg = &m_vecAllSegs[m_vecAllSegs.size() -1];
             leftsize = BLOCKSIZE - pseg->len;
         }
         if(leftsize == 0 || freeidx < segs.size()){
-            m_vecAllSegs.push_back(Segment(segs[freeidx]));
+            m_vecAllSegs.push_back(ShmSegment(segs[freeidx]));
             freeidx ++;
             pseg = &m_vecAllSegs[m_vecAllSegs.size() - 1];
             leftsize = BLOCKSIZE - pseg->len;
@@ -174,13 +172,13 @@ bool Project::recvData(uint64_t id, char* data, unsigned len, int &err)
     err = 0;
     AutoLock l(this->m_lock);
     unsigned leftsize = 0;
-    const ShmSegment *seg = NULL;
+    const ShmBlock *seg = NULL;
     if(m_vecAllSegs.size() > 0){
         leftsize = BLOCKSIZE - m_vecAllSegs.back().len;
         seg = m_vecAllSegs.back().blk;
     }
     long rem = len - leftsize;
-    vector<const ShmSegment*> segs;
+    vector<const ShmBlock*> segs;
     while(rem > 0){
         seg = ShmSeg_alloc(seg);
         if(seg == NULL) break;
@@ -249,18 +247,20 @@ static inline bool getPoolThrdRun()
 
 bool initProjPool()
 {
-    startServTask();
     initShmSegPool();
     int retp = pthread_create(&g_PoolThrdId, NULL, poolPollThread, NULL);
     if(retp != 0){
         LOG4CPLUS_ERROR(g_logger, "initProjPool failed to create thread poolPollThread.");
         exit(1);
     }
+    //after projpool init.
+    startServTask();
     return true;
 }
 
 void rlseProjPool()
 {
+    //befor projpool rlse.
     endServTask();
     //TODO make sure no project turn false.
 
@@ -374,7 +374,7 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
 }
 
 /**
-* TODO try to add full projects to the new stream.
+* TODO add full projects to the new stream.
 *
 */
 void addStream(ProjectConsumer *que)

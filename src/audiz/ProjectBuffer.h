@@ -20,6 +20,7 @@ typedef unsigned long uint64_t;//redefination, after cstdint.
 #include "../audizcomm.h"
 #include "../utilites.h"
 
+extern void reportAudiz_Result(const Audiz_Result& res);
 namespace audiz{
 /**
  * recv data is parallel with consume data; streams of consuming data are in parallel too; 
@@ -31,22 +32,29 @@ namespace audiz{
 
 extern char *g_ShmStartPtr;
 const unsigned BLOCKSIZE = 48000;
-struct ShmSegment{
+struct ShmBlock{
     int ftokId;
     unsigned offset;
-    //unsigned len;
     void set(int ftokId, unsigned offset){
         this->ftokId = ftokId;
         this->offset = offset;
     }
 };
+struct ShmSegment{
+    explicit ShmSegment(const ShmBlock *s):
+        blk(s), len(0)
+    {}
+    const ShmBlock *blk;
+    unsigned len;
+};
 
-static char * ShmSeg_get(const ShmSegment *seg, unsigned offset)
+
+static char * ShmSeg_get(const ShmBlock *seg, unsigned offset)
 {
     return g_ShmStartPtr + seg->offset + offset;
 }
 
-static void ShmSeg_copy(const ShmSegment* seg, unsigned offset, char *data, unsigned len)
+static void ShmSeg_copy(const ShmBlock* seg, unsigned offset, char *data, unsigned len)
 {
     memcpy(ShmSeg_get(seg, offset), data, len);
 }
@@ -54,13 +62,14 @@ static void ShmSeg_copy(const ShmSegment* seg, unsigned offset, char *data, unsi
 
 class Project{
 public:
+    /*
     struct Segment{
-        explicit Segment(const ShmSegment *s):
+        explicit Segment(const ShmBlock *s):
             blk(s), len(0)
         {}
-        const ShmSegment *blk;
+        const ShmBlock *blk;
         unsigned len;
-    };
+    };*/
 
     explicit Project(uint64_t id){
         PID = id;
@@ -75,7 +84,7 @@ public:
 
     }
 
-    void getData(std::vector<Segment> &vec){
+    void getData(std::vector<ShmSegment> &vec){
         AutoLock l(m_lock);
         vec.clear();
         vec.insert(vec.end(), m_vecAllSegs.begin(), m_vecAllSegs.end());
@@ -125,7 +134,7 @@ private:
     Project& operator=(const Project&);
     
 
-    bool recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmSegment*>& seg);
+    bool recvData(uint64_t id, char* data, unsigned len, std::vector<const ShmBlock*>& seg);
     void setFull(){
             bFull = true;
             if(m_vecAllTimeRecords.size() > 0) fullRecord = m_vecAllTimeRecords.back();
@@ -148,7 +157,7 @@ private:
     bool bFinished;
     unsigned ceilUnitIdx;
     unsigned ceilOffset;
-    std::vector<Segment> m_vecAllSegs;
+    std::vector<ShmSegment> m_vecAllSegs;
     std::vector<ArrivalRecord> m_vecAllTimeRecords;
 };
 
