@@ -341,10 +341,10 @@ void *servtask_loop(void *param)
     const char *unPath = AZ_DATACENTER;
     int servfd = serv_listen(unPath);
     if(servfd < 0){
-        LOG4CPLUS_ERROR(g_logger, "serv_listen error. path: "<< unPath<< "; error: "<< strerror(errno));
+        LOG4CPLUS_ERROR(g_logger, "servtask_loop serv_listen error. path: "<< unPath<< "; error: "<< strerror(errno));
         exit(1);
     }
-    LOG4CPLUS_INFO(g_logger, "serv_listen at path "<< unPath);
+    LOG4CPLUS_INFO(g_logger, "servtask_loop serv_listen at path "<< unPath);
     while(true){
         int modlidx = 0;
         int dataidx = 0;
@@ -369,7 +369,7 @@ void *servtask_loop(void *param)
             continue;
         }
         else if(retpoll < 0){
-            fprintf(stderr, "encounter errors while polling servfd. error: %s\n", strerror(errno));
+            LOG4CPLUS_ERROR(g_logger, "servtask_loop polling error. error: "<< strerror(errno));
             break;
         }
         short errbits = fdarr[0].revents & (POLLERR | POLLHUP | POLLNVAL);

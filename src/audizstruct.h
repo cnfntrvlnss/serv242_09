@@ -69,36 +69,6 @@ struct Audiz_WaveUnit{
 #define CHARS_AS_INIT32(chs) *(reinterpret_cast<int32_t*>(chs))
 #define CHARS_AS_INIT64(chs) *(reinterpret_cast<int64_t*>(chs))
 
-#define LinkNameLen 64
-struct Audiz_LinkRequest{
-    char head[LinkNameLen];
-    unsigned long sid;
-    
-    void pack_w(std::vector<AZ_PckVec>& pcks) const{
-        pcks.clear();
-        pcks.push_back(AZ_PckVec(const_cast<char*>(head), LinkNameLen));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<unsigned long*>(&sid)), sizeof(unsigned long)));
-    }
-    void pack_r(std::vector<AZ_PckVec>& pcks){
-        pcks.clear();
-        pcks.push_back(AZ_PckVec((head), LinkNameLen));
-        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(sid)), sizeof(unsigned long)));
-    }
-};
-struct Audiz_LinkResponse{
-    Audiz_LinkRequest req;
-    char ack[LinkNameLen];
-
-    void pack_w(std::vector<AZ_PckVec>& pcks) const{
-        req.pack_w(pcks);
-        pcks.push_back(AZ_PckVec((const_cast<char*>(ack)), LinkNameLen));
-    }
-    void pack_r(std::vector<AZ_PckVec>& pcks){
-        req.pack_r(pcks);
-        pcks.push_back(AZ_PckVec(((ack)), LinkNameLen));
-    }
-};
-
 struct Audiz_PResult_Head{
     int32_t type;
     int32_t ack;

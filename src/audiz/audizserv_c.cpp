@@ -5,6 +5,7 @@
 	> Created Time: Thu 23 Feb 2017 03:45:08 AM EST
  ************************************************************************/
 
+#include <poll.h>
 #include<iostream>
 
 #include "../audizrecst.h"
@@ -19,11 +20,12 @@ using namespace audiz;
 
 class RecSession: public ProjectConsumer{
 public:
-    
+    RecSession(int fd, long procId):
+        link(fd), clientId(procId)
+    {}
     int link;
     long clientId;
 
-    
     bool sendProject(Project *proj);
     //have data to read.
     bool recvResponse();
@@ -46,6 +48,16 @@ bool RecSession::recvResponse()
         return false;
     }
     if(head.type == AZ_NOTIFY_GETDATA){
+        uint64_t pid;
+        pcks.clear();
+        pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&pid), sizeof(uint64_t)));
+        for(int idx=0; idx < head.val; idx++){
+            readn(link, reinterpret_cast<PckVec*>(&pcks[0]), 1, &err, 0);
+            if(err < 0){
+                LOG4CPLUS_ERROR(g_logger, "RecSession::recvResponse while process az_notify_getdata fail to read project id from client "<< clientId<< OUTPUT_ERROR);
+                return false;
+            }
+        }
     }
     else if(head.type == AZ_PUSH_RECRESULT){
         Audiz_Result res;
@@ -93,6 +105,112 @@ bool RecSession::sendProject(Project *proj)
     return true;
 }
 
+map<int, RecSession*> g_mRecSesses;
+static void RecSess_add(int fd, long procId)
+{
+    assert(g_mRecSesses.find(fd) == g_mRecSesses.end());
+    g_mRecSesses[fd] = new RecSession(fd, procId);
+    addStream(g_mRecSesses[fd]);
+}
+
+static inline void closeRecLink(int fd)
+{
+    assert(g_mRecSesses.find(fd) != g_mRecSesses.end());
+    LOG4CPLUS_INFO(g_logger, "end rec link. fd: "<< fd<< "; clientId: "<< g_mRecSesses[fd]->clientId);
+    removeStream(g_mRecSesses[fd]);
+    g_mRecSesses.erase(fd);
+    close(fd);
+}
+
+static bool procImplAcceptLink(int servfd)
+{
+    uid_t uid;
+    long procid;
+    int tmpfd = serv_accept(servfd, &uid);
+    if(tmpfd < 0){
+        LOG4CPLUS_ERROR(g_logger, "procImplAcceptLink serv_accept error. "<< OUTPUT_ERROR);
+        return false;
+    }
+    Audiz_LinkResponse res;
+    vector<AZ_PckVec> pcks;
+    res.req.pack_r(pcks);
+    int err;
+    readn(tmpfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "procImplAcceptLink fail to read first package of new rec link."<< OUTPUT_ERROR);
+        goto err_exit;
+    }
+    if(strcmp(res.req.head, AZ_RECLINKNAME) == 0){
+        LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin a new rec link. fd: "<< tmpfd);
+        strcpy(res.ack, AZ_RECLINKACK);
+        res.pack_w(pcks);
+        writen(tmpfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+        if(err < 0){
+            LOG4CPLUS_ERROR(g_logger, "procImplAcceptLink failed to write response to rec link."<< OUTPUT_ERROR);
+            goto err_exit;
+        }
+        procid = res.req.sid;
+        LOG4CPLUS_INFO(g_logger, "a new rec link. fd: "<< tmpfd<< "; clientId: "<< procid);
+    }
+    else{
+        LOG4CPLUS_WARN(g_logger, "procImplAccptLink unrecognized client connecting not for reclink.");
+        goto err_exit;
+    }
+    RecSess_add(tmpfd, procid);
+    return true;
+err_exit:
+    close(tmpfd);
+    return false;
+}
+
+void* servRec_loop(void *param)
+{
+    int servfd = serv_listen(AZ_RECCENTER);
+    if(servfd < 0){
+        LOG4CPLUS_ERROR(g_logger, "servRec_loop serv_listen error. path: "<< AZ_RECCENTER<< OUTPUT_ERROR);
+        exit(1);
+    }
+    LOG4CPLUS_INFO(g_logger, "servRec_loop server listen at path: "<< AZ_RECCENTER);
+    struct pollfd fdarr[10];
+    fdarr[0].fd = servfd;
+    fdarr[0].events = POLLIN;
+    while(true){
+        int fdidx= 1;
+        for(map<int, RecSession*>::iterator it=g_mRecSesses.begin(); it !=g_mRecSesses.end(); it++){
+            fdarr[fdidx].fd = it->first;
+            fdarr[fdidx].events = POLLIN;
+            fdidx ++;
+        }
+        int retp = poll(fdarr, fdidx, -1);
+        if(retp == 0){
+            continue;
+        }
+        else if(retp < 0){
+            LOG4CPLUS_ERROR(g_logger, "servtask_loop pooling error. error: "<< strerror(errno));
+            break;
+        }
+        if(fdarr[0].revents & POLLIN){
+            if(procImplAcceptLink(servfd)) break;
+        }
+
+        #define POLLERROR_EVS (POLLERR | POLLHUP | POLLNVAL)
+        for(int idx=1; idx < fdidx; idx++){
+            bool bclose = false;
+            if(fdarr[idx].revents & POLLIN){
+                assert(g_mRecSesses.find(fdarr[idx].fd) != g_mRecSesses.end());
+                g_mRecSesses[fdarr[idx].fd]->recvResponse();
+            }
+            if(fdarr[idx].revents & POLLERROR_EVS){
+                LOG4CPLUS_ERROR(g_logger, "servRec_loop reclink is broken whiling polling, fd: "<< fdarr[idx].fd<< OUTPUT_ERROR);
+                bclose = true;
+            }
+            if(bclose){
+                closeRecLink(fdarr[idx].fd);
+            }
+        }
+    }
+    return NULL;
+}
 /*
 void run(){
     RecSession rec1, rec2;

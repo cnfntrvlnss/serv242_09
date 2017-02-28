@@ -53,6 +53,7 @@ static void initShmSegPool()
         exit(1);
     }
     g_ShmStartPtr = (char*)shmat(g_iFtokId, 0, SHM_RND);
+    LOG4CPLUS_INFO(g_logger, "initShmSegPool have got shared memory. key: "<< key<< "; id: "<< g_iFtokId<< "; Pointer: "<< g_ShmStartPtr);
     memcpy(g_ShmStartPtr, "\x01", 1);
     g_ShmSegNum = g_uShmSize / BLOCKSIZE;
     g_ShmSegArr = (ShmBlock *)malloc(sizeof(ShmBlock) * g_ShmSegNum);
@@ -76,7 +77,7 @@ static void rlseShmSegPool()
         LOG4CPLUS_ERROR(g_logger, "rlseShmSegPool shmdt failed. error: "<< strerror(errno));
     }
     if(shmctl(g_iShmId, IPC_RMID, NULL) == -1){
-        LOG4CPLUS_ERROR(g_logger, "rlseShmSegPool shmdt failed. error: "<< strerror(errno));
+        LOG4CPLUS_ERROR(g_logger, "rlseShmSegPool shmctl with IPC_RMID failed. error: "<< strerror(errno));
     }
 }
 
@@ -355,6 +356,11 @@ static inline void delProjectRefer(uint64_t pid)
 */
 void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
 {
+    if(res != NULL){
+        //forward result to audizserver_p.
+        reportAudiz_Result(*res);
+    }
+
     AutoLock l(g_ProjPoolLock);
     if(g_mConsumeProjs.find(this) == g_mConsumeProjs.end()){
         return;
@@ -364,12 +370,6 @@ void ProjectConsumer::confirm(uint64_t pid, Audiz_Result *res)
         return;
     }
     setprjs.erase(pid);
-
-    if(res != NULL){
-        //forward result to audizserver_p.
-        reportAudiz_Result(*res);
-    }
-
     delProjectRefer(pid);
 }
 

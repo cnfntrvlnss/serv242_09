@@ -15,7 +15,7 @@
 typedef unsigned uint32_t;
 //#include "ProjectBuffer.h"
 #define AZ_RECCENTER "recCenter"
-#define AZ_LINKMSGLEN 64
+//#define AZ_LINKMSGLEN 64
 #define AZ_RECLINKNAME "rec link"
 #define AZ_RECLINKACK "server ok"
 
