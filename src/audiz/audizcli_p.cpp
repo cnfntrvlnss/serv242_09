@@ -19,11 +19,17 @@
 #include<iostream>
 using namespace std;
 
-#include "globalfunc.h"
+//#include "globalfunc.h"
 #include "audizcli_p.h"
 #include "../apueclient.h"
 
-# ifndef _GLOBALFUNC_H
+#ifdef _ZSUMMER_LOG4Z_H_
+#define BLOGE(fmt, ...) LOGFMT_ERROR(g_logger, fmt, ##__VA_ARGS__)
+#define BLOGW(fmt, ...) LOGFMT_WARN(g_logger, fmt, ##__VA_ARGS__)
+#define BLOGI(fmt, ...) LOGFMT_INFO(g_logger, fmt, ##__VA_ARGS__)
+#define BLOGD(fmt, ...) LOGFMT_DEBUG(g_logger, fmt, ##__VA_ARGS__)
+#define BLOGT(fmt, ...) LOGFMT_TRACE(g_logger, fmt, ##__VA_ARGS__)
+#else
 enum BLOG_LEVEL{BLOGT, BLOGD, BLOGI, BLOGW, BLOGE};
 #define BLOGLMT BLOGI
 #define BIFO(x) if(BLOGLMT >= BLOG##x) 
@@ -32,13 +38,7 @@ enum BLOG_LEVEL{BLOGT, BLOGD, BLOGI, BLOGW, BLOGE};
 #define BLOGI(fmt, ...) BIFO(I) fprintf(stderr, "INFO "fmt"\n", ##__VA_ARGS__)
 #define BLOGD(fmt, ...) BIFO(D) fprintf(stderr, "DEBUG "fmt"\n", ##__VA_ARGS__)
 #define BLOGT(fmt, ...) BIFO(T) fprintf(stderr, "TRACE "fmt"\n", ##__VA_ARGS__)
-#else
-#define BLOGE(fmt, ...) LOGFMT_ERROR(g_logger, fmt, ##__VA_ARGS__)
-#define BLOGW(fmt, ...) LOGFMT_WARN(g_logger, fmt, ##__VA_ARGS__)
-#define BLOGI(fmt, ...) LOGFMT_INFO(g_logger, fmt, ##__VA_ARGS__)
-#define BLOGD(fmt, ...) LOGFMT_DEBUG(g_logger, fmt, ##__VA_ARGS__)
-#define BLOGT(fmt, ...) LOGFMT_TRACE(g_logger, fmt, ##__VA_ARGS__)
-#endif
+#endif 
 
 static char g_csWorkDir[MAX_PATH] = "ioacases/";
 

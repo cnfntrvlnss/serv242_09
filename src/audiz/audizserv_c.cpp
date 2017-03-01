@@ -57,9 +57,10 @@ bool RecSession::recvResponse()
                 LOG4CPLUS_ERROR(g_logger, "RecSession::recvResponse while process az_notify_getdata fail to read project id from client "<< clientId<< OUTPUT_ERROR);
                 return false;
             }
+            confirm(pid, NULL);
         }
     }
-    else if(head.type == AZ_PUSH_RECRESULT){
+    else if(head.type == AZ_REPORT_RESULT){
         Audiz_Result res;
         pcks.clear();
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&res), sizeof(res)));
@@ -69,6 +70,7 @@ bool RecSession::recvResponse()
                 LOG4CPLUS_ERROR(g_logger, "RecSession::recvResponse fail to read result form client "<< clientId<< OUTPUT_ERROR);
                 return false;
             }
+            LOG4CPLUS_INFO(g_logger, "RecSession::recvResponse read result from client "<< clientId<< " PID="<< res.m_iPCBID<<" TargetID="<< res.m_iTargetID);
             confirm(res.m_iPCBID, &res);
         }
     }
@@ -86,14 +88,19 @@ bool RecSession::sendProject(Project *proj)
     vector<AZ_PckVec> pcks;
     head.type = AZ_PUSH_PROJDATA;
     head.val = data.size();
+    head.pack_w(pcks);
+    //pid follows msg head.
+    pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(proj->PID)), sizeof(uint64_t)));
     int err;
     writen(link, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
         LOG4CPLUS_ERROR(g_logger, "fail to write data head to link. client: "<< clientId<< "; error: "<< strerror(errno));   
         return false;
     }
+    
     for(unsigned idx=0; idx < data.size(); idx++){
         RecLinkDataUnit unit;
+        pcks.clear();
         unit.pack(pcks);
         unit.set(data[idx].blk->ftokId, data[idx].blk->offset, data[idx].len);
         writen(link, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
@@ -143,6 +150,7 @@ static bool procImplAcceptLink(int servfd)
     if(strcmp(res.req.head, AZ_RECLINKNAME) == 0){
         LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin a new rec link. fd: "<< tmpfd);
         strcpy(res.ack, AZ_RECLINKACK);
+        pcks.clear();
         res.pack_w(pcks);
         writen(tmpfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
         if(err < 0){
@@ -190,7 +198,7 @@ void* servRec_loop(void *param)
             break;
         }
         if(fdarr[0].revents & POLLIN){
-            if(procImplAcceptLink(servfd)) break;
+            if(!procImplAcceptLink(servfd)) break;
         }
 
         #define POLLERROR_EVS (POLLERR | POLLHUP | POLLNVAL)
@@ -209,6 +217,7 @@ void* servRec_loop(void *param)
             }
         }
     }
+    exit(1);
     return NULL;
 }
 /*

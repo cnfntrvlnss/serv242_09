@@ -30,7 +30,7 @@ using namespace std;
 namespace audiz{
 
 /////////////////////////////shm management///////////////
-string g_ShmPath = "recMain";
+static string g_ShmPath = "recMain";
 int g_iFtokId = 0;
 int g_iShmId;
 char *g_ShmStartPtr = NULL;
@@ -53,7 +53,7 @@ static void initShmSegPool()
         exit(1);
     }
     g_ShmStartPtr = (char*)shmat(g_iFtokId, 0, SHM_RND);
-    LOG4CPLUS_INFO(g_logger, "initShmSegPool have got shared memory. key: "<< key<< "; id: "<< g_iFtokId<< "; Pointer: "<< g_ShmStartPtr);
+    LOG4CPLUS_INFO(g_logger, "initShmSegPool have got shared memory. key: "<< key<< "; id: "<< g_iFtokId<< "; Pointer: "<< reinterpret_cast<unsigned long>(g_ShmStartPtr));
     memcpy(g_ShmStartPtr, "\x01", 1);
     g_ShmSegNum = g_uShmSize / BLOCKSIZE;
     g_ShmSegArr = (ShmBlock *)malloc(sizeof(ShmBlock) * g_ShmSegNum);
@@ -246,8 +246,9 @@ static inline bool getPoolThrdRun()
     return ret;
 }
 
-bool initProjPool()
+bool initProjPool(const char *shmPath)
 {
+    g_ShmPath = shmPath;
     initShmSegPool();
     int retp = pthread_create(&g_PoolThrdId, NULL, poolPollThread, NULL);
     if(retp != 0){

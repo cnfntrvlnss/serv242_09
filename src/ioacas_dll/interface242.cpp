@@ -12,7 +12,7 @@
 #include<iostream>
 
 #include "globalfunc.h"
-#include "audizcli_p.h"
+#include "../audiz/audizcli_p.h"
 //#include "log4z.h"
 
 using namespace std;
@@ -26,9 +26,14 @@ static string g_AudizPath = (string)"ioacases/" + AZ_DATACENTER;
 
 static int audiz_reportResult(Audiz_Result *pResult)
 {
-    CDLLResult *pRes = reinterpret_cast<CDLLResult*>(pResult);
-    LOGFMT_DEBUG(g_logger, "report target... PID=%lu TargetType=%u TargetID=%u.", pRes->m_pDataUnit[0]->m_iPCBID, pRes->m_iTargetID, pRes->m_iAlarmType);
-    return g_ReportResult(g_iModuleID, pRes);
+    CDLLResult res;
+    res.m_pDataUnit[0]->m_iPCBID = pResult->m_iPCBID;
+    res.m_iTargetID = pResult->m_iTargetID;
+    res.m_iAlarmType = pResult->m_iAlarmType;
+    res.m_iHarmLevel = pResult->m_iHarmLevel;
+    res.m_fLikely = pResult->m_fLikely;
+    LOGFMT_DEBUG(g_logger, "report target... PID=%lu TargetType=%u TargetID=%u.", res.m_pDataUnit[0]->m_iPCBID, res.m_iAlarmType, res.m_iTargetID);
+    return g_ReportResult(g_iModuleID, &res);
 }
 
 static int audiz_getAllMdls(SpkMdlSt **pMdls)

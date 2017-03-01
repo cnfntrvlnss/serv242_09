@@ -11,9 +11,9 @@ DISTDIR := ${CND_DISTDIR}/${CONF}/${CND_PLATFORM}/
 MODE=Test
 TESTDIR=../test/ioacases/
 
-VPATH=../src/:../src/audiz/
+VPATH=../src/:../src/utilities/:../src/audiz/
 
-CPPNAMES:= audizserv_p.cpp recMain.cpp ProjectBuffer.cpp globalfunc.cpp utilites.cpp
+CPPNAMES:= audizserv_c.cpp audizserv_p.cpp recMain.cpp ProjectBuffer.cpp globalfunc.cpp utilites.cpp
 CPPNAMES +=
 CPPNAMES +=
 CPPNAMES+=

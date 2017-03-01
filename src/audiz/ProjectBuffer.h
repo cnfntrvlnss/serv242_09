@@ -18,7 +18,7 @@
 typedef unsigned long uint64_t;//redefination, after cstdint.
 //const unsigned UINT_MAX = ;
 #include "../audizcomm.h"
-#include "../utilites.h"
+#include "../utilities/utilites.h"
 
 extern void reportAudiz_Result(const Audiz_Result& res);
 namespace audiz{
@@ -170,7 +170,7 @@ public:
 void addStream(ProjectConsumer *que);
 void removeStream(ProjectConsumer *que);
 
-bool initProjPool();
+bool initProjPool(const char*);
 void rlseProjPool();
 
 bool recvProjSegment(uint64_t id, char *data, unsigned len);

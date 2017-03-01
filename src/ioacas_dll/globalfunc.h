@@ -8,7 +8,7 @@
 #ifndef _GLOBALFUNC_H
 #define _GLOBALFUNC_H
 
-#include "log4z.h"
+#include "../utilities/log4z.h"
 
 extern zsummer::log4z::ILog4zManager *g_Log4zManager;
 extern LoggerId g_logger;

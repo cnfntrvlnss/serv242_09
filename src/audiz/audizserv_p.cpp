@@ -332,24 +332,18 @@ bool procImplAcceptLink(int servfd)
     return true;
 }
 
+static int g_ServFd;
 /**
  * accept new client link from serv link, place the link in right place.
  *
  */
 void *servtask_loop(void *param)
 {
-    const char *unPath = AZ_DATACENTER;
-    int servfd = serv_listen(unPath);
-    if(servfd < 0){
-        LOG4CPLUS_ERROR(g_logger, "servtask_loop serv_listen error. path: "<< unPath<< "; error: "<< strerror(errno));
-        exit(1);
-    }
-    LOG4CPLUS_INFO(g_logger, "servtask_loop serv_listen at path "<< unPath);
     while(true){
         int modlidx = 0;
         int dataidx = 0;
         struct pollfd fdarr[3];
-        fdarr[0].fd = servfd;
+        fdarr[0].fd = g_ServFd;
         fdarr[0].events = POLLIN;
         int fdlen = 1;
         if(g_ModlFd > 0){
@@ -378,7 +372,7 @@ void *servtask_loop(void *param)
             break;
         }
         if(fdarr[0].revents & POLLIN){
-            procImplAcceptLink(servfd);
+            procImplAcceptLink(g_ServFd);
         }
         
         if(modlidx > 0 && fdarr[modlidx].revents != 0){
@@ -417,6 +411,7 @@ void *servtask_loop(void *param)
             }
         }
     }
+    exit(1);
     return NULL;
 }
 
@@ -425,6 +420,13 @@ void *servtask_loop(void *param)
 static pthread_t servThrdId;
 void startServTask()
 {
+    const char *unPath = AZ_DATACENTER;
+    g_ServFd = serv_listen(unPath);
+    if(g_ServFd < 0){
+        LOG4CPLUS_ERROR(g_logger, "startServTask serv_listen error. path: "<< unPath<< "; error: "<< strerror(errno));
+        exit(1);
+    }
+    LOG4CPLUS_INFO(g_logger, "startServTask serv_listen at path "<< unPath);
     int retp = pthread_create(&servThrdId, NULL, servtask_loop, NULL);
     if(retp !=0 ){
         handle_error(retp ,"pthread_create");
