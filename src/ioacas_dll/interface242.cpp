@@ -27,7 +27,12 @@ static string g_AudizPath = (string)"ioacases/" + AZ_DATACENTER;
 static int audiz_reportResult(Audiz_Result *pResult)
 {
     CDLLResult res;
-    res.m_pDataUnit[0]->m_iPCBID = pResult->m_iPCBID;
+    WavDataUnit data;
+    res.m_pDataUnit[0] = &data;
+    data.m_iDataLen = 0;
+    data.m_pData = NULL;
+    data.m_pPCB = NULL;
+    data.m_iPCBID = pResult->m_iPCBID;
     res.m_iTargetID = pResult->m_iTargetID;
     res.m_iAlarmType = pResult->m_iAlarmType;
     res.m_iHarmLevel = pResult->m_iHarmLevel;

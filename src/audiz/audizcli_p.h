@@ -79,7 +79,7 @@ private:
     int checkDataFd(bool btry);
     bool prochandleResp(int fd);
     bool prochandleDataResp(int fd);
-    int procSendCfgCmd();
+    //int procSendCfgCmd();
     int procExecCommonCfgCmd(std::vector<AZ_PckVec>& task, Audiz_PResult &result);
 
     /////////////////data part//////////////////

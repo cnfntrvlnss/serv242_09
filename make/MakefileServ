@@ -14,7 +14,7 @@ TESTDIR=../test/ioacases/
 VPATH=../src/:../src/utilities/:../src/audiz/
 
 CPPNAMES:= audizserv_c.cpp audizserv_p.cpp recMain.cpp ProjectBuffer.cpp globalfunc.cpp utilites.cpp
-CPPNAMES +=
+CPPNAMES += audizcli_c.cpp
 CPPNAMES +=
 CPPNAMES+=
 CNAMES:= apueclient.c

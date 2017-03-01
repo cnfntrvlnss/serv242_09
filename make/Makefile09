@@ -11,7 +11,7 @@ DISTDIR := ${CND_DISTDIR}/${CONF}/${CND_PLATFORM}/
 MODE=Test
 TESTDIR=../test/ioacas/
 
-VPATH=../src/:../src/utilities/:../src/audiz/:../src/ioacas_dll/:
+VPATH=../src/ioacas_dll/:../src/:../src/utilities/:../src/audiz/
 
 CPPNAMES:= audizcli_p.cpp globalfunc.cpp interface242.cpp log4z.cpp
 CPPNAMES +=

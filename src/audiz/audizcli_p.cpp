@@ -66,7 +66,7 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
     int err;
     writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
     if(err < 0){
-        BLOGE("procSendCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
+        BLOGE("SessionStruct::proExecCommon error write cmd to cfg link. error: %s.", strerror(errno));
         cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
         cfgCmdResult.head.ack = -1;
         //closeModlLink();
@@ -85,42 +85,6 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
     return 0;
 }
 
-/**
- * deprecated.
- * send one cfgcmd to server, wait the response matching to the cfgcmd.
- *
- */
- int SessionStruct::procSendCfgCmd()
-{
-    //TODO add serialized commands having no response.
-    
-    //TODO make sure commiting command only once.
-    bool bCfgCmdSend  = false;
-    pthread_mutex_lock(&cfgCmdLock);
-    if(cfgCmdTask.size() == 0 || bCfgCmdSend){
-        pthread_mutex_unlock(&cfgCmdLock);
-        return 0;
-    }
-    int err;
-    //vector<AZ_PckVec> vecResult;
-    //Audiz_PResult_Head_OnWire::serialize(cfgCmdResult.head, vecResult);
-    pthread_mutex_lock(&modlFdLock);
-    int fd = modlFd;
-    pthread_mutex_unlock(&modlFdLock);
-    writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
-    if(err < 0){
-        BLOGE("procSendCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
-        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
-        cfgCmdResult.head.ack = -1;
-        //closeModlLink();
-    }
-    else{
-        bCfgCmdSend = true;
-    }
-    pthread_mutex_unlock(&cfgCmdLock);
-    if(err < 0) pthread_cond_broadcast(&cfgCmdResultSetCond);
-    return 0;
-}
 
 /**
  * only for detecting link breaking.
@@ -667,3 +631,42 @@ unsigned SessionStruct::queryUnfinishedProjNum()
         return 1;
     }
 }
+
+/**
+ * deprecated.
+ * send one cfgcmd to server, wait the response matching to the cfgcmd.
+ *
+ */
+ /*
+ int SessionStruct::procSendCfgCmd()
+{
+    //TODO add serialized commands having no response.
+    
+    //TODO make sure commiting command only once.
+    bool bCfgCmdSend  = false;
+    pthread_mutex_lock(&cfgCmdLock);
+    if(cfgCmdTask.size() == 0 || bCfgCmdSend){
+        pthread_mutex_unlock(&cfgCmdLock);
+        return 0;
+    }
+    int err;
+    //vector<AZ_PckVec> vecResult;
+    //Audiz_PResult_Head_OnWire::serialize(cfgCmdResult.head, vecResult);
+    pthread_mutex_lock(&modlFdLock);
+    int fd = modlFd;
+    pthread_mutex_unlock(&modlFdLock);
+    writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
+    if(err < 0){
+        BLOGE("procSendCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
+        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
+        cfgCmdResult.head.ack = -1;
+        //closeModlLink();
+    }
+    else{
+        bCfgCmdSend = true;
+    }
+    pthread_mutex_unlock(&cfgCmdLock);
+    if(err < 0) pthread_cond_broadcast(&cfgCmdResultSetCond);
+    return 0;
+}
+*/
