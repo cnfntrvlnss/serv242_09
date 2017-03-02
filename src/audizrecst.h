@@ -23,6 +23,7 @@ typedef unsigned uint32_t;
 #define AZ_PUSH_PROJDATA AZ_MSGTYPE_START
 #define AZ_NOTIFY_GETDATA (AZ_MSGTYPE_START + 1)
 #define AZ_REPORT_RESULT (AZ_MSGTYPE_START + 2)
+#define AZ_CONSUME_SAMPLES (AZ_NOTIFY_GETDATA + 3)
 
 #define  AZ_MAGIC_8CHARS "\x07\x06\x05\x04\x03\x02\x01\x00"
 struct RecLinkMsg_Head{

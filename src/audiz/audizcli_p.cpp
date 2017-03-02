@@ -32,12 +32,12 @@ using namespace std;
 #else
 enum BLOG_LEVEL{BLOGT, BLOGD, BLOGI, BLOGW, BLOGE};
 #define BLOGLMT BLOGI
-#define BIFO(x) if(BLOGLMT >= BLOG##x) 
-#define BLOGE(fmt, ...)  BIFO(E) fprintf(stderr, "ERROR "fmt "\n", ##__VA_ARGS__)
-#define BLOGW(fmt, ...) BIFO(W) fprintf(stderr, "WARN "fmt"\n", ##__VA_ARGS__)
-#define BLOGI(fmt, ...) BIFO(I) fprintf(stderr, "INFO "fmt"\n", ##__VA_ARGS__)
-#define BLOGD(fmt, ...) BIFO(D) fprintf(stderr, "DEBUG "fmt"\n", ##__VA_ARGS__)
-#define BLOGT(fmt, ...) BIFO(T) fprintf(stderr, "TRACE "fmt"\n", ##__VA_ARGS__)
+#define BIFO(x) if(BLOGLMT <= BLOG##x) 
+#define BLOGE(fmt, ...)  BIFO(E) fprintf(stderr, "ERROR " fmt "\n", ##__VA_ARGS__)
+#define BLOGW(fmt, ...) BIFO(W) fprintf(stderr, "WARN " fmt "\n", ##__VA_ARGS__)
+#define BLOGI(fmt, ...) BIFO(I) fprintf(stderr, "INFO " fmt "\n", ##__VA_ARGS__)
+#define BLOGD(fmt, ...) BIFO(D) fprintf(stderr, "DEBUG " fmt "\n", ##__VA_ARGS__)
+#define BLOGT(fmt, ...) BIFO(T) fprintf(stderr, "TRACE " fmt "\n", ##__VA_ARGS__)
 #endif 
 
 static char g_csWorkDir[MAX_PATH] = "ioacases/";
@@ -64,19 +64,27 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
     int fd = modlFd;
     pthread_mutex_unlock(&modlFdLock);
     int err;
-    writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
-    if(err < 0){
-        BLOGE("SessionStruct::proExecCommon error write cmd to cfg link. error: %s.", strerror(errno));
-        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
-        cfgCmdResult.head.ack = -1;
-        //closeModlLink();
-    }
-    else{
-        while(cfgCmdResult.head.type == 0){
-            pthread_cond_wait(&cfgCmdResultSetCond, &cfgCmdLock);
+    if(fd > 0){
+        writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
+        if(err < 0){
+            BLOGE("SessionStruct::procExecCommon error write cmd to cfg link. error: %s.", strerror(errno));
+            //closeModlLink();
+        }
+        else{
+            while(cfgCmdResult.head.type == 0){
+                pthread_cond_wait(&cfgCmdResultSetCond, &cfgCmdLock);
+            }
         }
     }
+    else{
+        BLOGW("SessionStruct::procExecCommon modl link is not opened.");
+        err = -1;
+    }
 
+    if(err < 0){
+        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
+        cfgCmdResult.head.ack = -1;
+    }
     cfgCmdTask.clear();
     result = cfgCmdResult;
     cfgCmdResult.reset();
@@ -87,7 +95,7 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
 
 
 /**
- * only for detecting link breaking.
+ * ignore all input, and only for detecting link breaking.
  *
  */
 bool SessionStruct::prochandleDataResp(int fd)
@@ -320,7 +328,6 @@ static int getDataLinkFd(const char* servAddr)
 
 int SessionStruct::checkDataFd(bool btry)
 {
-
     pthread_mutex_lock(&dataFdLock);
     if(dataFd == -1 && btry){
         int fd = getDataLinkFd(servPath);
@@ -349,31 +356,62 @@ static void emptysighandler(int signo)
 {
     fprintf(stderr, "signal %d catched.\n", signo);
 }
+
+/**
+ * invoked immediately after establishing modl link.
+ *
+ */
 static bool SendToServerAllSmps(SpkMdlStVec *vec, int fd)
 {
     bool bret = true;
+    vector<AZ_PckVec> pcks;
+    Audiz_PRequest_Head req;
+    req.type = AZOP_ADD_SAMPLE;
     SpkMdlStVec::iterator *it = vec->iter();
+    int err;
+    unsigned acculen = 0;
     for(SpkMdlSt* mdl= it->next(); mdl != NULL; mdl= it->next()){
-        vector<AZ_PckVec> pcks;
-        Audiz_PRequest_Head req;
-        req.type = AZOP_ADD_SAMPLE;
-        req.addLen = 0;
+        pcks.clear();
+        req.addLen = 1;
         req.pack_w(pcks);
         mdl->pack_w(pcks);
-        //for(unsigned idx=st; idx < pcks.size(); idx++){
-        //    req.addLen += pcks[idx].len;
-        //}
-        Audiz_PResult res;
-        res.reset();
-        int err;
         writen(fd, reinterpret_cast<PckVec*>(&pcks[0]),pcks.size(), &err, 0);
         if(err < 0){
-            BLOGE("SendToServerAllSmps error occurs while writing mdl. name=%s error=%s.", mdl->head, strerror(errno));
+            BLOGE("SendToServerAllSmps error occurs while writing mdl. idx=%u name=%s error=%s.", acculen, mdl->head, strerror(errno));
             bret = false;
             break;
         }
+        acculen ++;
     }
-    return bret;
+    if(bret == false){
+        return false;
+    }
+
+    req.addLen = 0;
+    pcks.clear();
+    req.pack_w(pcks);
+    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    if(err < 0){
+        BLOGE("SendToServerAllSmps error occures while writing msg of finishing adding. error=%s.", strerror(errno));
+        return false;
+    }
+    Audiz_PResult res;
+    res.reset();
+    pcks.clear();
+    res.head.pack_w(pcks);
+    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    if(err < 0){
+        BLOGE("SendToServerAllSmps error occures while reading response of msg of finishing adding. error=%s.", strerror(errno));
+        return false;
+    }
+    if(res.head.type != AZOP_ADD_SAMPLE + 1){
+        BLOGE("SendToServerAllSmps read unrecognized response while wait for response of msg of finishing adding. error=%s.", strerror(errno));
+        return false;
+    }
+    if(res.head.ack != acculen){
+        BLOGW("SendToServerAllSmps the num of received samples in server in not consistent of that send by client.");
+    }
+    return true;
 }
 /**
  * 
@@ -383,7 +421,7 @@ void* maintainSession_ex(void* param)
 {
     if(0)
     {
-        //if we want poll can be interrepted by other than fd event, use the following.
+        //if we want poll can be interrepted by other than fd event, use the following code.
         sigset_t mask;
         sigset_t oldmask;
         sigemptyset(&mask);
@@ -576,8 +614,8 @@ bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
     tmpSpk.len = len;
     vector<AZ_PckVec> pcks;
     Audiz_PRequest_Head req;
-    req.type = AZOP_ADD_SAMPLE;
-    req.addLen = 0;
+    req.type = AZOP_ADDRM_SAMPLE;
+    req.addLen = 1;
     req.pack_w(pcks);
     unsigned st = pcks.size();
     tmpSpk.pack_w(pcks);
@@ -589,6 +627,7 @@ bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
     procExecCommonCfgCmd(pcks, res);
     return true;
 }
+
 bool SessionStruct::deleteSample(const char *name)
 {
     return writeSample(name, NULL, 0);   

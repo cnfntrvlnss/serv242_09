@@ -174,6 +174,7 @@ unsigned  procFilesInDir(const char* szDir, FuncProcessFile addr)
             if(addr(szDir, dirp->d_name)) cnt++;
         }
     }
+    closedir(dp);
     return cnt;
 }
 

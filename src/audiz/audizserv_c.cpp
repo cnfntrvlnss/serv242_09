@@ -11,6 +11,7 @@
 #include "../audizrecst.h"
 #include "../apueclient.h"
 #include "ProjectBuffer.h"
+#include "samplelib.h"
 #include "globalfunc.h"
 
 using namespace std;
@@ -18,18 +19,30 @@ using namespace audiz;
 
 #define OUTPUT_ERROR "; error: "<< strerror(errno)
 
-class RecSession: public ProjectConsumer{
+class RecSession: public ProjectConsumer, SampleConsumer{
 public:
     RecSession(int fd, long procId):
         link(fd), clientId(procId)
     {}
     int link;
     long clientId;
+    unsigned smpType;
 
     bool sendProject(Project *proj);
     //have data to read.
     bool recvResponse();
 
+    bool addOne(const char *smpHead){
+        
+    }
+
+    bool rmOne(const char *smpHead){
+
+    }
+
+    void feedAll(){
+        
+    }
 };
 
 bool RecSession::recvResponse()
@@ -73,6 +86,9 @@ bool RecSession::recvResponse()
             LOG4CPLUS_INFO(g_logger, "RecSession::recvResponse read result from client "<< clientId<< " PID="<< res.m_iPCBID<<" TargetID="<< res.m_iTargetID);
             confirm(res.m_iPCBID, &res);
         }
+    }
+    else if(head.type == AZ_CONSUME_SAMPLES){
+        //TODO for consuming samples
     }
     else{
         LOG4CPLUS_ERROR(g_logger, "RecSession::recvResponse read msg_head having unrecognized type. client: "<< clientId << OUTPUT_ERROR);

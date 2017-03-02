@@ -18,5 +18,11 @@ bool rlseRecSession();
 bool fetchProject(uint64_t &pid, std::vector<AZ_PckVec>& data);
 bool notifyFinished(uint64_t pid);
 bool reportProjectResult(const Audiz_Result &res);
+
+//TODO add consuming sample
+typedef bool (*GetAllSmpsFunc)();
+typedef bool (*RmAddSmpFunc)(const char *head, char *data, unsigned len);
+void registerTypeConsumer(unsigned short type, GetAllSmpsFunc addr1, RmAddSmpFunc addr2);
 }
+
 #endif

@@ -26,7 +26,7 @@ struct Audiz_Result{
 };
 
 struct AZ_PckVec{
-    AZ_PckVec(const char* base, unsigned len):
+    explicit AZ_PckVec(const char* base=(unsigned long)0, unsigned len=0):
         base(const_cast<char*>(base)), len(len)
     {}
     char *base;
@@ -40,13 +40,11 @@ struct SpkMdlSt{
     char *buf;
 
     void pack_w(std::vector<AZ_PckVec> &pcks) const{
-        pcks.clear();
         pcks.push_back(AZ_PckVec(const_cast<char*>(head), SPKMDL_HDLEN));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&const_cast<unsigned &>(len)), sizeof(unsigned)));
         pcks.push_back(AZ_PckVec(const_cast<char*>(buf), len));
     }
     void pack_r(std::vector<AZ_PckVec> &pcks){
-        pcks.clear();
         pcks.push_back(AZ_PckVec((head), SPKMDL_HDLEN));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(len)), sizeof(unsigned)));
     }
@@ -58,12 +56,10 @@ struct Audiz_LinkRequest{
     unsigned long sid;
     
     void pack_w(std::vector<AZ_PckVec>& pcks) const{
-        pcks.clear();
         pcks.push_back(AZ_PckVec(const_cast<char*>(head), LinkNameLen));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(const_cast<unsigned long*>(&sid)), sizeof(unsigned long)));
     }
     void pack_r(std::vector<AZ_PckVec>& pcks){
-        pcks.clear();
         pcks.push_back(AZ_PckVec((head), LinkNameLen));
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&(sid)), sizeof(unsigned long)));
     }

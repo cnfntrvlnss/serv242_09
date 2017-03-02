@@ -7,6 +7,8 @@
 
 #include "interface242.h"
 
+#include <sys/types.h>
+#include <dirent.h>
 #include <cstdio>
 #include <string>
 #include<iostream>
@@ -46,19 +48,63 @@ static int audiz_getAllMdls(SpkMdlSt **pMdls)
     return 0;
 }
 
+static string g_SmpDir = "SpkModel";
 class SpkMdlStVecImpl: public SpkMdlStVec, SpkMdlStVec::iterator
 {
 public:
+    ~SpkMdlStVecImpl(){
+        if(dp != NULL) closedir(dp);
+    }
     SpkMdlStVecImpl* iter(){
-        LOGFMT_INFO(g_logger, "SpkMdlStVecImpl::iter invoked.");
+        if(dp != NULL){ closedir(dp); }
+        if(g_SmpDir[g_SmpDir.size() - 1] != '/'){
+            g_SmpDir += "/";
+        }
+        dp = opendir(g_SmpDir.c_str());
+        if(dp == NULL){
+            LOGFMT_ERROR(g_logger, "SpkMdlStVecImpl:iter failed to open dir %s.", g_SmpDir.c_str());
+            return NULL;
+        }
+        LOGFMT_DEBUG(g_logger, "SpkMdlStVecImpl::iter invoked.");
         return this;
     }
     SpkMdlSt* next(){
-        LOGFMT_INFO(g_logger, "SpkMdlStVecImpl::next invoked.");
-        return NULL;
+        LOGFMT_DEBUG(g_logger, "SpkMdlStVecImpl::next invoked.");
+        struct dirent *dirp = NULL;
+        while(true){
+            dirp = readdir(dp);
+            if(dirp == NULL){
+                closedir(dp);
+                return NULL;
+            }
+            char *filename = dirp->d_name; 
+            if(strcmp(filename, ".") == 0) continue;
+            if(strcmp(filename, ".") == 0) continue;
+            int t1, t2, t3;
+            if(sscanf(filename, "%d_%x_%d.", &t1, &t2, &t3) != 3){
+                continue;
+            }
+            strncpy(mdl.head, filename, SPKMDL_HDLEN-1);
+            string filepath = g_SmpDir + mdl.head;
+            FILE *fp = fopen(filepath.c_str(), "rb");
+            if(fp == NULL){
+                LOGFMT_ERROR(g_logger, "SpkMdlStVecImpl::next failed to open file %s.", filepath.c_str());
+                 continue;   
+            }
+            fseek(fp, 0, SEEK_END);
+            mdl.len = ftell(fp);
+            g_TmpData.resize(mdl.len);
+            fseek(fp, 0, SEEK_SET);
+            mdl.buf = const_cast<char*>(g_TmpData.c_str());
+            fread(mdl.buf, 1, mdl.len, fp);
+            fclose(fp);
+            return &mdl;
+        }
     }
 private:
-    
+    DIR *dp = NULL;
+    SpkMdlSt mdl;
+    string g_TmpData;
 };
 
 static SpkMdlStVecImpl g_AllSmpVec;

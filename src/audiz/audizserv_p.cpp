@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include<iostream>
 
+#include "samplelib.h"
 #include "ProjectBuffer.h"
 #include "../audizstruct.h"
 #include "../apueclient.h"
@@ -22,6 +23,8 @@
 
 using namespace std;
 using namespace audiz;
+
+
 unsigned long g_SessID = 0;
 int g_DataFd = -1;
 int g_ModlFd = -1;
@@ -67,6 +70,7 @@ static bool setModlFd(int mfd, unsigned long id)
     g_ModlFd = mfd;
     g_SessID = id;
     pthread_mutex_unlock(&g_ModlFdLock);
+    initSampleLib();
     return true;
 }
 static void clearModlFd(int mfd)
@@ -197,6 +201,29 @@ static bool procDataReceived(int dataFd)
     return true;
 }
 
+static string g_TmpSampledata;
+bool fetchSampleFromFd(int fd, vector<AZ_PckVec> &pcks, SpkMdlSt& mdl)
+{
+    int err;
+    pcks.clear();
+    mdl.pack_r(pcks);
+    readn(fd, pcks, &err, 0);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to read sample in msg AZOP_ADDRM_SAMPLE. error: "<< strerror(errno));
+        return false;
+    }
+    g_TmpSampledata.resize(mdl.len);
+    mdl.buf = const_cast<char*>(g_TmpSampledata.c_str());
+    pcks.resize(1);
+    pcks[0].base = mdl.buf;
+    pcks[0].len = mdl.len;
+    readn(fd, pcks, &err, 0);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to read data of sample in msg AZOP_ADDRM_SAMPLE. error: "<< strerror(errno));
+        return false;
+    }
+    return true;
+}
 /**
  *
  * TODO do some to verify it's ok to do write and read with the same fd concurrently. 
@@ -233,10 +260,19 @@ static bool procModlReceived(int mdlFd)
             LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_QUERY_SAMPLE success.");
         }
     }
-    else if(reqhd.type == AZOP_ADD_SAMPLE){
-        //TODO add/del sample.
+    else if(reqhd.type == AZOP_ADDRM_SAMPLE){
+        SpkMdlSt mdl;
+        if(!fetchSampleFromFd(mdlFd, pcks, mdl)){
+            return false;
+        }
+        if(mdl.len == 0){
+            rmSample(mdl.head);
+        }
+        else{
+            addSample(mdl.head, mdl.buf, mdl.len);
+        }
         Audiz_PResult_Head reshd;
-        reshd.type = AZOP_ADD_SAMPLE + 1;
+        reshd.type = AZOP_ADDRM_SAMPLE + 1;
         reshd.ack = 0;
         vector<AZ_PckVec> pcks;
         reshd.pack_w(pcks);
@@ -248,6 +284,23 @@ static bool procModlReceived(int mdlFd)
         }
         else{
             LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_ADD_SAMPLE success.");
+        }
+    }
+    else if(reqhd.type == AZOP_ADD_SAMPLE){
+        if(reqhd.addLen == 0){
+            finishStore();
+        }
+        else{
+            for(int idx=0; idx< reqhd.addLen; idx++){
+                SpkMdlSt mdl;
+                if(!fetchSampleFromFd(mdlFd, pcks, mdl)){
+                    return false;
+                }
+                if(mdl.len > 0){
+                    storeSample(mdl.head, mdl.buf, mdl.len);
+                }
+            }
+            LOG4CPLUS_DEBUG(g_logger, "procModlReceived have read "<< reqhd.addLen<< " samples in msg AZOP_ADDRM_SAMPLE.");
         }
     }
     else if(reqhd.type == AZOP_QUERY_PROJ){
