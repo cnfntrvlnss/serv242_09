@@ -263,6 +263,13 @@ inline std::string getBasename(const char* path)
     return std::string(path, psep);
 }
 
+inline void readData(FILE *fp, std::string& data)
+{
+    fseek(fp, 0, SEEK_END);
+    data.resize(ftell(fp));
+    fseek(fp, 0, SEEK_SET);
+    fread(const_cast<char*>(data.c_str()), 1, data.size(), fp);
+}
 std::vector<std::string> loadFileList(const char *listfile);
 bool make_directorys(const char *mypath);
 

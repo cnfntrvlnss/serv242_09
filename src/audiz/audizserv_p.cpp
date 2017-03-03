@@ -227,7 +227,7 @@ bool fetchSampleFromFd(int fd, vector<AZ_PckVec> &pcks, SpkMdlSt& mdl)
 
 /**
  *
- * TODO do some to verify it's ok to do write and read with the same fd concurrently. 
+ *
  */
 static bool procModlReceived(int mdlFd)
 {
@@ -280,11 +280,11 @@ static bool procModlReceived(int mdlFd)
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err < 0){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADD_SAMPLE failed to write Audiz_PResult_Head.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADDRM_SAMPLE failed to write Audiz_PResult_Head.");
             return false;
         }
         else{
-            LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_ADD_SAMPLE success.");
+            LOG4CPLUS_INFO(g_logger, "procModlReceived processing AZOP_ADDRM_SAMPLE success.");
         }
     }
     else if(reqhd.type == AZOP_ADD_SAMPLE){
@@ -311,7 +311,7 @@ static bool procModlReceived(int mdlFd)
                     storeSample(mdl.head, mdl.buf, mdl.len);
                 }
             }
-            LOG4CPLUS_DEBUG(g_logger, "procModlReceived have read "<< reqhd.addLen<< " samples in msg AZOP_ADDRM_SAMPLE.");
+            LOG4CPLUS_DEBUG(g_logger, "procModlReceived have get "<< reqhd.addLen<< " samples in msg AZOP_ADDRM_SAMPLE.");
         }
     }
     else if(reqhd.type == AZOP_QUERY_PROJ){
@@ -363,18 +363,17 @@ bool procImplAcceptLink(int servfd)
              break;   
         }
         if(strcmp(res.req.head, AZ_CFGLINKNAME) == 0){
-            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new data link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
             pcks.clear();
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
             if(errw <0) break;
+            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink a new modl link. fd="<< tmpfd<< "; clientId="<< res.req.sid);
             if(setModlFd(tmpfd, res.req.sid)){
                 bsucc = true;
             }
         }
         else if(strcmp(res.req.head, AZ_DATALINKNAME) == 0){
-            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new modl link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
             pcks.clear();
             res.pack_w(pcks);
@@ -382,6 +381,7 @@ bool procImplAcceptLink(int servfd)
             //data link should be nonblocking.
             set_fl(tmpfd, O_NONBLOCK);
             if(errw <0) break;
+            LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink a new data link. fd="<< tmpfd<< "; clientId="<< res.req.sid);
             if(setDataFd(tmpfd, res.req.sid)){
                 bsucc = true;
             }

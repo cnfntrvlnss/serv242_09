@@ -86,6 +86,11 @@ bool storeSample(const char *head, char *data, unsigned len)
     return true;
 }
 
+/**
+ *
+ * only be triggered at establishing new mdl link of servtask so far,
+ * TODO should extend to be triggered by at establishing rec link of servrec. 
+ */
 void finishStore()
 {
     pthread_mutex_lock(&g_SmpCmsLock);

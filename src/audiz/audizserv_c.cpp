@@ -23,27 +23,116 @@ class RecSession: public ProjectConsumer, SampleConsumer{
 public:
     RecSession(int fd, long procId):
         link(fd), clientId(procId)
-    {}
+    {
+        smpType = 0;
+        addStream(this);
+    }
+    ~RecSession(){
+        if(smpType > 0){
+            rmSmpConsumer(this);
+        }
+        removeStream(this);
+    }
     int link;
     long clientId;
     unsigned smpType;
+    //for serializing msg send to rec link.
+    pthread_mutex_t mylock;
+    void setSmpType(unsigned val){
+        smpType = val;
+        addSmpConsumer(this);
+    }
 
     bool sendProject(Project *proj);
     //have data to read.
     bool recvResponse();
 
-    bool addOne(const char *smpHead){
-        
+    bool parseSmpHead(const char *smpHead, int &t2){
+        int t1, t3;
+        if(sscanf(smpHead, "%d_%x_%d.", &t1, &t2, &t3) != 3){
+            return false;
+        }
+        return false;
     }
-
-    bool rmOne(const char *smpHead){
-
-    }
-
-    void feedAll(){
-        
-    }
+    bool addOne(const char *smpHead);
+    bool rmOne(const char *smpHead);
+    void feedAll();
 };
+
+bool RecSession::addOne(const char *smpHead)
+{
+    int t2;
+    if(parseSmpHead(smpHead, t2)){
+        LOG4CPLUS_ERROR(g_logger, "RecSession::addOne cannot parse irregular head of sample. head: "<< smpHead);
+        return false;
+    }
+    if(t2 == smpType){
+        //send msg to client.
+        RecLinkMsg_Head head;
+        head.type = AZ_RECADD_SAMPLE;
+        head.val = 1;
+        vector<AZ_PckVec> pcks;
+        head.pack_w(pcks);
+        pcks.push_back(AZ_PckVec(const_cast<char*>(smpHead), SPKMDL_HDLEN));
+        int err;
+        pthread_mutex_lock(&mylock);
+        writen(link, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+        pthread_mutex_unlock(&mylock);
+        if(err < 0){
+            LOG4CPLUS_ERROR(g_logger, "RecSession::addOne failed to write msg to reclink."<< OUTPUT_ERROR);
+            return false;
+        }
+    }
+    else{
+        
+    }
+}
+
+bool RecSession::rmOne(const char *smpHead)
+{
+    int t2;
+    if(parseSmpHead(smpHead, t2)){
+        LOG4CPLUS_ERROR(g_logger, "RecSession::rmOne cannot parse irregular head of sample. head: "<< smpHead);
+        return false;
+    }
+    if(t2 == smpType){
+        //send msg to client.
+        RecLinkMsg_Head head;
+        head.type = AZ_RECRM_SAMPLE;
+        head.val = 1;
+        vector<AZ_PckVec> pcks;
+        head.pack_w(pcks);
+        pcks.push_back(AZ_PckVec(const_cast<char*>(smpHead), SPKMDL_HDLEN));
+        int err;
+        pthread_mutex_lock(&mylock);
+        writen(link, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+        pthread_mutex_unlock(&mylock);
+        if(err < 0){
+            LOG4CPLUS_ERROR(g_logger, "RecSession::rmOne failed to write msg to reclink."<< OUTPUT_ERROR);
+            return false;
+        }
+    }
+    else{
+    }
+}
+
+void RecSession::feedAll()
+{
+    //send msg to client.
+    RecLinkMsg_Head head;
+    head.type = AZ_RECFEED_SAMPLES;
+    head.val = 0;
+    vector<AZ_PckVec> pcks;
+    head.pack_w(pcks);
+    int err;
+    pthread_mutex_lock(&mylock);
+    writen(link, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    pthread_mutex_unlock(&mylock);
+    if(err < 0){
+        LOG4CPLUS_ERROR(g_logger, "RecSession::feedAll failed to write msg to reclink."<< OUTPUT_ERROR);
+        return ;
+    }
+}
 
 bool RecSession::recvResponse()
 {
@@ -87,8 +176,8 @@ bool RecSession::recvResponse()
             confirm(res.m_iPCBID, &res);
         }
     }
-    else if(head.type == AZ_CONSUME_SAMPLES){
-        //TODO for consuming samples
+    else if(head.type == AZ_RECREQ_SAMPLES){
+        setSmpType(head.val);
     }
     else{
         LOG4CPLUS_ERROR(g_logger, "RecSession::recvResponse read msg_head having unrecognized type. client: "<< clientId << OUTPUT_ERROR);
@@ -133,14 +222,13 @@ static void RecSess_add(int fd, long procId)
 {
     assert(g_mRecSesses.find(fd) == g_mRecSesses.end());
     g_mRecSesses[fd] = new RecSession(fd, procId);
-    addStream(g_mRecSesses[fd]);
 }
 
 static inline void closeRecLink(int fd)
 {
     assert(g_mRecSesses.find(fd) != g_mRecSesses.end());
     LOG4CPLUS_INFO(g_logger, "end rec link. fd: "<< fd<< "; clientId: "<< g_mRecSesses[fd]->clientId);
-    removeStream(g_mRecSesses[fd]);
+    delete g_mRecSesses[fd];
     g_mRecSesses.erase(fd);
     close(fd);
 }

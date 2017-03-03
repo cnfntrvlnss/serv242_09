@@ -69,6 +69,31 @@ bool ProjectConsumerImpl::sendProject(Project* prj)
     return true;
 }
 
+struct SpkMdlInfo{
+    explicit SpkMdlInfo(int id=0, int type=0, int level=0):
+        cfgId(id), alarmType(type), harmLevel(level)
+    {}
+    int cfgId;
+    int alarmType;
+    int harmLevel;
+};
+static vector<SpkMdlInfo> g_vecSpkInfo;
+static vector<char*> g_vecSpkMdl;
+
+static bool addOrRmSample(const char *head, char *data, unsigned len)
+{
+    int t1, t2, t3;
+    if(sscanf(head, "%d_%x_%d", &t1, &t2, &t3) != 3) return false;
+    if(data != NULL){
+        g_vecSpkMdl.push_back(reinterpret_cast<char*>(malloc(len)));
+        g_vecSpkInfo.push_back(SpkMdlInfo(t1, t2, t3));
+    }
+    else{
+        //TODO remove sample.
+    }
+    return true;
+}
+
 string getMyselfExe()
 {
     string ret;
@@ -93,6 +118,8 @@ int main()
     sertask.detach();
 
     initRecSession("./", AZ_RECCENTER, myselfexe.c_str());
+    registerSampleConsumer(0x92, addOrRmSample);
+
     while(true){
         Audiz_Result res;
         uint64_t &pid = res.m_iPCBID;
@@ -105,6 +132,11 @@ int main()
 
         saveProject(pid, prjdata);
         notifyFinished(pid);
+        if(g_vecSpkInfo.size() > 0){
+            res.m_iTargetID = g_vecSpkInfo[0].cfgId;
+            res.m_iAlarmType = g_vecSpkInfo[0].alarmType;
+            res.m_iHarmLevel = g_vecSpkInfo[0].harmLevel;
+        }
         reportProjectResult(res);
     }
 

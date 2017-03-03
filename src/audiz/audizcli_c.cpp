@@ -15,6 +15,7 @@
 #include<iostream>
 
 #include "../apueclient.h"
+#include "../utilities/utilites.h"
 
 namespace audiz{
 
@@ -67,6 +68,9 @@ static string g_ShmPath;
 static const int g_iFtokId = 0;
 static int g_ShmId = 0;
 static char *g_ShmPtr = NULL;
+static int g_iSmpType = 0;
+static RmAddSmpFunc g_OpSmpAddr = NULL;
+static const char* g_SmpDir = "samples";
 
 static bool getSharedData(char* &stptr, int &shmId)
 {
@@ -122,49 +126,153 @@ bool rlseRecSession()
 {   
 }
 
+bool registerSampleConsumer(unsigned short type, RmAddSmpFunc addr2)
+{
+    g_OpSmpAddr = addr2;
+    g_iSmpType = type;
+    RecLinkMsg_Head head;
+    head.type = AZ_RECREQ_SAMPLES;
+    head.val = type;
+    vector<AZ_PckVec> pcks;
+    head.pack_w(pcks);
+    int err;
+    writen(g_RecFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    if(err < 0){
+        MYLOGE("registerSampleConsumer failed to send msg to reclink."<< OUTPUT_ERRNO);
+        return false;
+    }
+    return true;
+}
+
+bool procReadProjData(int fd, vector<AZ_PckVec>& pcks, unsigned segnum, uint64_t &pid, vector<AZ_PckVec>& data)
+{
+    //pid follows msg head.
+    PckVec pck;
+    pck.base = reinterpret_cast<char*>(&pid);
+    pck.len = sizeof(uint64_t);
+    int err;
+    readn(g_RecFd, &pck, 1, &err, 0);
+    if(err < 0){
+        MYLOGE("readProjData failed to read pid."<< OUTPUT_ERRNO);
+        return false;
+    }
+    vector<RecLinkDataUnit> src;
+    src.resize(segnum);
+    pcks.clear();
+    for(int idx=0; idx < segnum; idx++){
+        src[idx].pack(pcks);
+    }
+    readn(g_RecFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    if(err < 0){
+        MYLOGE("readProjData failed to read dataunit."<< OUTPUT_ERRNO);
+        return false;
+    }
+    for(int idx=0; idx < segnum; idx++){
+        assert(src[idx].ftokId == 0);
+        data.push_back(AZ_PckVec(g_ShmPtr + src[idx].start, src[idx].length));
+    }
+    return true;
+}
+
+static bool readSample(const char *smpdir, const char* filename)
+{
+    int t1, t2, t3;
+    if(sscanf(filename, "%d_%x_%d", &t1, &t2, &t3) != 3 || t2 != g_iSmpType){
+        return false;
+    }
+    string filepath = concatePath(smpdir, filename);
+    FILE *fp = fopen(filepath.c_str(), "rb");
+    if(fp == NULL){
+        MYLOGE("readSample failed to open file "<< filepath);
+        return false;
+    }
+    string tmpData;
+    readData(fp, tmpData);
+    g_OpSmpAddr(filename, const_cast<char*>(tmpData.c_str()), tmpData.size());
+    fclose(fp);
+    return true;
+}
+
+bool procAddRmSamples(int fd, vector<AZ_PckVec>& pcks, unsigned smpnum, bool bAdd)
+{
+    char smphead[SPKMDL_HDLEN];
+    pcks.resize(1);
+    pcks[0].base = smphead;
+    pcks[0].len = SPKMDL_HDLEN;
+    int err;
+    const char *loghead;
+    if(bAdd){
+        loghead = "procAddSamples";
+    }
+    else{
+        loghead = "procRmSamples";
+    }
+    for(int idx=0; idx< smpnum; idx++){
+        readn(fd, reinterpret_cast<PckVec*>(&pcks[0]), 1, &err, 0);
+        if(err < 0){
+            MYLOGE(loghead<< " failed to read smphead from reclink."<< OUTPUT_ERRNO);
+            return false;
+        }
+        
+        if(bAdd){
+            if(readSample(g_SmpDir, smphead)){
+            }
+            else{
+                MYLOGE(loghead<< " failed to read sample data of head "<< smphead);
+            }
+        }
+        else{
+            g_OpSmpAddr(smphead, NULL, 0);
+        }
+    }
+    return true;
+}
+
+void readAllSamples()
+{
+    unsigned retnum = procFilesInDir(g_SmpDir, readSample);
+    MYLOGI("readAllSamples have read "<< retnum<< " samples successfully.");
+}
+
 bool fetchProject(uint64_t &pid, vector<AZ_PckVec>& data)
 {
     data.clear();
     RecLinkMsg_Head head;
     vector<AZ_PckVec> pcks;
-    head.pack_r(pcks);
-    int err;
-    readn(g_RecFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
-    if(err < 0){
-        MYLOGE("fetchProject failed to read msg head "<< OUTPUT_ERRNO);
-        return false;
-    }
-    if(memcmp(head.strMark, AZ_MAGIC_8CHARS, 8) != 0){
-        MYLOGE("fetchProject read invalid msg head.");
-        return false;
-    }
-    if(head.type != AZ_PUSH_PROJDATA){
-        MYLOGE("fetchProject read unrecognized msg head.");
-        return false;
-    }
-    //pid follows msg head.
-    PckVec pck;
-    pck.base = reinterpret_cast<char*>(&pid);
-    pck.len = sizeof(uint64_t);
-    readn(g_RecFd, &pck, 1, &err, 0);
-    if(err < 0){
-        MYLOGE("fetchProject failed to read pid."<< OUTPUT_ERRNO);
-        return false;
-    }
-    vector<RecLinkDataUnit> src;
-    src.resize(head.val);
-    pcks.clear();
-    for(int idx=0; idx < head.val; idx++){
-        src[idx].pack(pcks);
-    }
-    readn(g_RecFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
-    if(err < 0){
-        MYLOGE("fetchProject failed to read dataunit."<< OUTPUT_ERRNO);
-        return false;
-    }
-    for(int idx=0; idx < head.val; idx++){
-        assert(src[idx].ftokId == 0);
-        data.push_back(AZ_PckVec(g_ShmPtr + src[idx].start, src[idx].length));
+    while(true){
+        pcks.clear();
+        head.pack_r(pcks);
+        int err;
+        readn(g_RecFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+        if(err < 0){
+            MYLOGE("fetchProject failed to read msg head "<< OUTPUT_ERRNO);
+            return false;
+        }
+        if(memcmp(head.strMark, AZ_MAGIC_8CHARS, 8) != 0){
+            MYLOGE("fetchProject read invalid msg head.");
+            return false;
+        }
+        if(head.type == AZ_PUSH_PROJDATA){
+            if(!procReadProjData(g_RecFd, pcks, head.val, pid, data)) return false;
+            break;
+        }
+        else if(head.type == AZ_RECFEED_SAMPLES){
+            readAllSamples();
+        }
+        else if(head.type == AZ_RECADD_SAMPLE){
+            if(!procAddRmSamples(g_RecFd, pcks, head.val, true)){
+                return false;
+            }
+        }
+        else if(head.type == AZ_RECRM_SAMPLE){
+            if(!procAddRmSamples(g_RecFd, pcks, head.val, false)){
+                return false;
+            }
+        }
+        else{
+            MYLOGE("fetchProject read unrecognized msg head.");
+            return false;
+        }
     }
     return true;
 }

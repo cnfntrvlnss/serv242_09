@@ -22,8 +22,12 @@ typedef unsigned uint32_t;
 #define AZ_MSGTYPE_START 64
 #define AZ_PUSH_PROJDATA AZ_MSGTYPE_START
 #define AZ_NOTIFY_GETDATA (AZ_MSGTYPE_START + 1)
-#define AZ_REPORT_RESULT (AZ_MSGTYPE_START + 2)
-#define AZ_CONSUME_SAMPLES (AZ_NOTIFY_GETDATA + 3)
+#define AZ_REPORT_RESULT (AZ_MSGTYPE_START + 3)
+#define AZ_RECREQ_SAMPLES (AZ_MSGTYPE_START + 5)
+#define AZ_RECFEED_SAMPLES  (AZ_MSGTYPE_START + 6)
+#define AZ_RECADD_SAMPLE (AZ_MSGTYPE_START + 8)
+#define AZ_RECRM_SAMPLE  (AZ_MSGTYPE_START + 10)
+
 
 #define  AZ_MAGIC_8CHARS "\x07\x06\x05\x04\x03\x02\x01\x00"
 struct RecLinkMsg_Head{
@@ -42,8 +46,8 @@ struct RecLinkMsg_Head{
         pcks.push_back(AZ_PckVec(reinterpret_cast<char*>(&val), sizeof(uint32_t)));
     }
 
-    bool serialize(int fd);
-    bool deserialize(int fd);
+    //bool serialize(int fd);
+    //bool deserialize(int fd);
 };
 
 struct RecLinkDataUnit{
