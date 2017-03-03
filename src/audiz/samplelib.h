@@ -12,6 +12,7 @@ namespace audiz{
 void initSampleLib();
 bool storeSample(const char *head, char *data, unsigned len);
 void finishStore();
+unsigned getSampleNum();
 void addSample(const char *head, char* data, unsigned len);
 void rmSample(const char *head);
 

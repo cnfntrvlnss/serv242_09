@@ -53,10 +53,10 @@ class SpkMdlStVecImpl: public SpkMdlStVec, SpkMdlStVec::iterator
 {
 public:
     ~SpkMdlStVecImpl(){
-        if(dp != NULL) closedir(dp);
+        closedp();
     }
     SpkMdlStVecImpl* iter(){
-        if(dp != NULL){ closedir(dp); }
+        closedp();
         if(g_SmpDir[g_SmpDir.size() - 1] != '/'){
             g_SmpDir += "/";
         }
@@ -74,7 +74,7 @@ public:
         while(true){
             dirp = readdir(dp);
             if(dirp == NULL){
-                closedir(dp);
+                closedp();
                 return NULL;
             }
             char *filename = dirp->d_name; 
@@ -102,6 +102,12 @@ public:
         }
     }
 private:
+    void closedp(){
+        if(dp != NULL){
+            closedir(dp);
+            dp = NULL;
+        }
+    }
     DIR *dp = NULL;
     SpkMdlSt mdl;
     string g_TmpData;

@@ -43,22 +43,23 @@ static int getRecLinkFd(const char* myPath, const char* servAddr)
     writen(retfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
         MYLOGE("getRecLinkFd failed to write first packet to unpath "<< servAddr << OUTPUT_ERRNO);
-        close(retfd);
-        return 0;
+        goto err_exit;
     }
+    pcks.clear();
     res.pack_r(pcks);
     readn(retfd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
         MYLOGE("getRecLinkFd failed to read response from server."<< OUTPUT_ERRNO);
-        close(retfd);
-        return 0;
+        goto err_exit;
     }
     if(strcmp(res.req.head, AZ_RECLINKNAME) != 0 || res.req.sid != getpid() || strcmp(AZ_RECLINKACK, res.ack) != 0){
         MYLOGE("getRecLinkFd read unexpected response from server.");
-        close(retfd);
-        return 0;
+        goto err_exit;
     }
     return retfd;
+err_exit:
+    close(retfd);
+    return -1;
 }
 
 static int g_RecFd = -1;

@@ -9,6 +9,11 @@
 
 #include"apueclient.h"
 
+#if 0
+#define OUTPUTE(fmt, ...) fprintf(stderr, "ERROR " fmt, ##__VA_ARGS__) 
+#else
+#define OUTPUTE(fmt, ...) 
+#endif
 #define offsetof(type, field) ((unsigned long)&((type *) 0)->field)
 /**
  * do my best to write all data, or write nothing if istry is not zero,
@@ -44,13 +49,13 @@ size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
                     continue;
                 }
                 else{
-                    fprintf(stderr, "error write. strerror: %s.\n", strerror(curerr));
+                    OUTPUTE( "error write. strerror: %s.\n", strerror(curerr));
                     *err = -1;
                     break;
                 }
             }
             else if(nwrite == 0){
-                fprintf(stderr, "detect EOF while writing.\n");
+                OUTPUTE( "detect EOF while writing.\n");
                 *err = -1;
                 break;
             }
@@ -65,7 +70,7 @@ size_t writen(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
         }
     }
     if(err ==0 && trycnt > 0){
-        fprintf(stderr, "for unavailable resource temporarily, try %u times by step of %f secs.\n", trycnt, stepsecs);
+        OUTPUTE( "for unavailable resource temporarily, try %u times by step of %f secs.\n", trycnt, stepsecs);
         *err = trycnt;
     }
     return retn;
@@ -102,13 +107,13 @@ size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
                     continue;
                 }
                 else{
-                    fprintf(stderr, "error read. errno: %d.\n", curerr);
+                    OUTPUTE( "error read. errno: %d.\n", curerr);
                     *err = -1;
                     break;
                 }
             }
             else if(nread == 0){
-                fprintf(stderr, "detect EOF while reading.\n");
+                OUTPUTE( "detect EOF while reading.\n");
                 *err = -1;
                 break;
             }
@@ -122,7 +127,7 @@ size_t readn(int fd, PckVec *vec, unsigned cnt, int *err, int istry)
         }
     }
     if(err ==0 && trycnt > 0){
-        fprintf(stderr, "unavailable resource temporarily, try %u times by step of %f secs.\n", trycnt, secs);
+        OUTPUTE( "unavailable resource temporarily, try %u times by step of %f secs.\n", trycnt, secs);
         *err = trycnt;
     }
     return retn;
@@ -182,16 +187,19 @@ errout:
 }
 
 
-void set_fl(int fd, int flags)
+bool set_fl(int fd, int flags)
 {
     int val;
     if((val = fcntl(fd, F_GETFL, 0)) < 0){
-        fprintf(stderr, "fcntl F_GETFL error.\n");
+        OUTPUTE( "fcntl F_GETFL error.\n");
+        return false;
     }
     val |= flags;
     if(fcntl(fd, F_SETFL, val) < 0){
-        fprintf(stderr, "fcntl F_SETFL error.\n");
+        OUTPUTE( "fcntl F_SETFL error.\n");
+        return false;
     }
+    return true;
 }
 
 int serv_listen(const char *name)
@@ -250,7 +258,7 @@ int serv_accept(int listenfd, uid_t *uidptr)
     len -= offsetof(struct sockaddr_un, sun_path);
     memcpy(name, un.sun_path, len);
     name[len] = 0;
-    //fprintf(stderr, "new client arrives, addr: %s.\n", name);
+    //OUTPUTE( "new client arrives, addr: %s.\n", name);
     if(stat(name, &statbuf) < 0){
         rval =-3;
         goto errout;

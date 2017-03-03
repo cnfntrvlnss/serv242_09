@@ -164,7 +164,7 @@ static bool procDataReceived(int dataFd)
     int cntLimit = 10;
     while(cntLimit-- > 0){
         int retr = readn(dataFd, pcks, &err, 1);
-        if(err == -1){
+        if(err < 0){
             LOG4CPLUS_ERROR(g_logger, "the data link has broken, and close it. __LINE__: "<< __LINE__);
             return false;
         }
@@ -184,7 +184,7 @@ static bool procDataReceived(int dataFd)
 
         g_tmpAudioData.resize(unit.m_iDataLen);
         readn(dataFd, &g_tmpAudioData, 1, &err, 0);
-        if(err == -1){
+        if(err < 0){
             LOG4CPLUS_ERROR(g_logger, "the data link has broken, and close it. __LINE__: "<< __LINE__);
             return false;
         }
@@ -224,6 +224,7 @@ bool fetchSampleFromFd(int fd, vector<AZ_PckVec> &pcks, SpkMdlSt& mdl)
     }
     return true;
 }
+
 /**
  *
  * TODO do some to verify it's ok to do write and read with the same fd concurrently. 
@@ -248,11 +249,11 @@ static bool procModlReceived(int mdlFd)
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_QUERY_SAMPLE + 1;
         reshd.ack = 0;
-        vector<AZ_PckVec> pcks;
+        pcks.clear();
         reshd.pack_w(pcks);
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
-        if(err == -1){
+        if(err < 0){
             LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_SAMPLE failed to write Audiz_PResult_Head.");
             return false;
         }
@@ -274,11 +275,11 @@ static bool procModlReceived(int mdlFd)
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_ADDRM_SAMPLE + 1;
         reshd.ack = 0;
-        vector<AZ_PckVec> pcks;
+        pcks.clear();
         reshd.pack_w(pcks);
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
-        if(err == -1){
+        if(err < 0){
             LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADD_SAMPLE failed to write Audiz_PResult_Head.");
             return false;
         }
@@ -289,6 +290,16 @@ static bool procModlReceived(int mdlFd)
     else if(reqhd.type == AZOP_ADD_SAMPLE){
         if(reqhd.addLen == 0){
             finishStore();
+            Audiz_PResult_Head reshd;
+            reshd.type = AZOP_ADD_SAMPLE + 1;
+            reshd.ack = getSampleNum();
+            pcks.clear();
+            reshd.pack_w(pcks);
+            writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
+            if(err < 0){
+                LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to write response of msg AZOP_ADD_SAMPLE. ERROR"<< strerror(errno));   
+                return false;
+            }
         }
         else{
             for(int idx=0; idx< reqhd.addLen; idx++){
@@ -307,10 +318,10 @@ static bool procModlReceived(int mdlFd)
         Audiz_PResult_Head reshd;
         reshd.type = AZOP_QUERY_PROJ + 1;
         reshd.ack = queryProjNum();
-        vector<AZ_PckVec> pcks;
+        pcks.clear();
         reshd.pack_w(pcks);
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
-        if(err == -1){
+        if(err < 0){
             LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_PROJ failed to write Audiz_PResult_Head.");
             return false;
         }
@@ -354,6 +365,7 @@ bool procImplAcceptLink(int servfd)
         if(strcmp(res.req.head, AZ_CFGLINKNAME) == 0){
             LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new data link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
+            pcks.clear();
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
             if(errw <0) break;
@@ -364,6 +376,7 @@ bool procImplAcceptLink(int servfd)
         else if(strcmp(res.req.head, AZ_DATALINKNAME) == 0){
             LOG4CPLUS_DEBUG(g_logger, "procImplAcceptLink begin establishing a new modl link.");
             strcpy(res.ack, AZ_LINKBUILDOK);
+            pcks.clear();
             res.pack_w(pcks);
             writen(tmpfd, pcks, &errw, 0);
             //data link should be nonblocking.

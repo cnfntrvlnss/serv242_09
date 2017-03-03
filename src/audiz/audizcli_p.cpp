@@ -262,8 +262,8 @@ static int getModlLinkFd(const char* servAddr)
     retPcks[1].len = sizeof(unsigned long);
     retPcks[2].base = retData;
     retPcks[2].len = 64;
-    unsigned tolLen = retPcks[0].len + retPcks[1].len + retPcks[2].len;
-    if(readn(retfd, retPcks, 3, &err, 0) != tolLen){
+    readn(retfd, retPcks, 3, &err, 0);
+    if(err < 0){
         BLOGE("getCfgLinkFd failed to read response from server, error: %s.", strerror(errno));
         close(retfd);
         return 0;
@@ -398,14 +398,14 @@ static bool SendToServerAllSmps(SpkMdlStVec *vec, int fd)
     Audiz_PResult res;
     res.reset();
     pcks.clear();
-    res.head.pack_w(pcks);
-    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    res.head.pack_r(pcks);
+    readn(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
         BLOGE("SendToServerAllSmps error occures while reading response of msg of finishing adding. error=%s.", strerror(errno));
         return false;
     }
     if(res.head.type != AZOP_ADD_SAMPLE + 1){
-        BLOGE("SendToServerAllSmps read unrecognized response while wait for response of msg of finishing adding. error=%s.", strerror(errno));
+        BLOGE("SendToServerAllSmps read unrecognized response while wait for response of msg of finishing adding.");
         return false;
     }
     if(res.head.ack != acculen){

@@ -174,7 +174,7 @@ static bool procImplAcceptLink(int servfd)
             goto err_exit;
         }
         procid = res.req.sid;
-        LOG4CPLUS_INFO(g_logger, "a new rec link. fd: "<< tmpfd<< "; clientId: "<< procid);
+        LOG4CPLUS_INFO(g_logger, "procImplAcceptLink a new rec link. fd: "<< tmpfd<< "; clientId: "<< procid);
     }
     else{
         LOG4CPLUS_WARN(g_logger, "procImplAccptLink unrecognized client connecting not for reclink.");

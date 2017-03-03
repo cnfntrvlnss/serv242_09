@@ -54,6 +54,7 @@ static bool removeFile(const char* dir, const char *file)
     }
     return true;
 }
+static unsigned g_SmpNum;
 /**
  * remove all samples.
  *
@@ -62,6 +63,7 @@ void initSampleLib()
 {
     unsigned num = procFilesInDir(g_SampleDir, removeFile);
     MYLOGI("initSampleLib have removed "<< num <<" samples.");
+    g_SmpNum = 0;
 }
 
 bool storeSample(const char *head, char *data, unsigned len)
@@ -80,6 +82,7 @@ bool storeSample(const char *head, char *data, unsigned len)
     }
     fwrite(data, 1, len, fp);
     fclose(fp);
+    g_SmpNum ++;
     return true;
 }
 
@@ -90,6 +93,11 @@ void finishStore()
         (*it)->feedAll();
     }
     pthread_mutex_unlock(&g_SmpCmsLock);
+}
+
+unsigned getSampleNum()
+{
+    return g_SmpNum;
 }
 
 void addSample(const char *head, char* data, unsigned len)
