@@ -130,6 +130,7 @@ int InitDLL(int iPriority,
     g_ReportResult = func; 
     g_AudizSess = new SessionStruct(g_AudizPath.c_str(), audiz_reportResult, &g_AllSmpVec);
     g_bInitialized = true;
+    g_AudizSess->feedAllSamples();
     LOGI("InitDLL ioacas module is initialized successfully.");
     return 0;
 }

@@ -18,7 +18,7 @@
 #define MAX_PATH 512
 
 typedef int (*AUDIZ_REPORTRESULTPROC)(Audiz_Result *pResult);
-typedef int (*AUDIZ_GETALLMDLSPROC)(struct SpkMdlSt **);
+//typedef int (*AUDIZ_GETALLMDLSPROC)(struct SpkMdlSt **);
 struct SpkMdlStVec{
     struct iterator{
         virtual SpkMdlSt* next() =0;
@@ -39,6 +39,9 @@ public:
     ~SessionStruct();
     
     bool writeData(Audiz_WaveUnit* unit);
+    //TODO add api feedAllSamples
+    void feedAllSamples();
+    bool feedAllSamples_inner();
     bool writeSample(const char *name, char *buf, unsigned len);
     bool deleteSample(const char *name);
     bool queueSamples(std::vector<std::string> &smps);
@@ -73,6 +76,19 @@ private:
         bConnected = val;
         pthread_mutex_unlock(&isRunLock);
     }
+
+    void setHasSamples(){
+        pthread_mutex_lock(&hasSamplesLock);
+        bHasSamples = true;
+        pthread_mutex_unlock(&hasSamplesLock);
+    }
+    bool  getHasSamples(){
+        pthread_mutex_lock(&hasSamplesLock);
+        bool bret = bHasSamples;
+        pthread_mutex_unlock(&hasSamplesLock);
+        return bret;
+    }
+
     void closeDataLink(int);
     void closeModlLink(int);
     int checkModlFd(bool btry);
@@ -86,6 +102,8 @@ private:
     char servPath[MAX_PATH];
     bool isRunning;
     pthread_mutex_t isRunLock;
+    bool bHasSamples;
+    pthread_mutex_t hasSamplesLock;
     bool bConnected;
     pthread_t modlThreadId;
     AUDIZ_REPORTRESULTPROC repResAddr;
@@ -94,15 +112,12 @@ private:
     int modlFd;
     pthread_mutex_t modlFdLock;
     pthread_mutex_t dataFdLock;
-    //pthread_mutex_t modlFdLock;
-    //used to commit task to modl link.
+    //used to commit task to modl link in other than inner thread.
     pthread_mutex_t cfgCmdLock;
     pthread_cond_t cfgCmdResultSetCond;
     pthread_cond_t cfgCmdTaskEmptyCond;
     std::vector<AZ_PckVec> cfgCmdTask;
     Audiz_PResult cfgCmdResult;
-    //used to send modl asynchronously.
-    //list<SpkMdlData> allmdls;
 };
 
 #endif 

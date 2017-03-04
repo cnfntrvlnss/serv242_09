@@ -24,6 +24,7 @@
 using namespace std;
 using namespace audiz;
 
+#define OUTPUT_ERRNO " error"<< strerror(errno)
 
 unsigned long g_SessID = 0;
 int g_DataFd = -1;
@@ -209,7 +210,7 @@ bool fetchSampleFromFd(int fd, vector<AZ_PckVec> &pcks, SpkMdlSt& mdl)
     mdl.pack_r(pcks);
     readn(fd, pcks, &err, 0);
     if(err < 0){
-        LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to read sample in msg AZOP_ADDRM_SAMPLE. error: "<< strerror(errno));
+        LOG4CPLUS_ERROR(g_logger, "fetchSampleFromFd failed to read sample head. error: "<< strerror(errno));
         return false;
     }
     g_TmpSampledata.resize(mdl.len);
@@ -219,7 +220,7 @@ bool fetchSampleFromFd(int fd, vector<AZ_PckVec> &pcks, SpkMdlSt& mdl)
     pcks[0].len = mdl.len;
     readn(fd, pcks, &err, 0);
     if(err < 0){
-        LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to read data of sample in msg AZOP_ADDRM_SAMPLE. error: "<< strerror(errno));
+        LOG4CPLUS_ERROR(g_logger, "fetchSampleFromFd failed to read sample data. error: "<< strerror(errno));
         return false;
     }
     return true;
@@ -237,7 +238,7 @@ static bool procModlReceived(int mdlFd)
     int err;
     size_t retr = readn(mdlFd, pcks, &err, 0);
     if(err < 0){
-        LOG4CPLUS_ERROR(g_logger, "procModlReceived error occurs while reading Audiz_PRequest_Head.");
+        LOG4CPLUS_ERROR(g_logger, "procModlReceived error occurs while reading Audiz_PRequest_Head."<< OUTPUT_ERRNO);
         return false;
     }
     else if(err > 0){
@@ -254,7 +255,7 @@ static bool procModlReceived(int mdlFd)
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err < 0){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_SAMPLE failed to write Audiz_PResult_Head.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_SAMPLE failed to write Audiz_PResult_Head."<< OUTPUT_ERRNO);
             return false;
         }
         else{
@@ -280,7 +281,7 @@ static bool procModlReceived(int mdlFd)
         int err;
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err < 0){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADDRM_SAMPLE failed to write Audiz_PResult_Head.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_ADDRM_SAMPLE failed to write Audiz_PResult_Head."<< OUTPUT_ERRNO);
             return false;
         }
         else{
@@ -297,7 +298,7 @@ static bool procModlReceived(int mdlFd)
             reshd.pack_w(pcks);
             writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
             if(err < 0){
-                LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to write response of msg AZOP_ADD_SAMPLE. ERROR"<< strerror(errno));   
+                LOG4CPLUS_ERROR(g_logger, "procModlReceived failed to write response of msg AZOP_ADD_SAMPLE."<< OUTPUT_ERRNO);   
                 return false;
             }
         }
@@ -322,7 +323,7 @@ static bool procModlReceived(int mdlFd)
         reshd.pack_w(pcks);
         writen_s(mdlFd, &pcks[0], pcks.size(), &err, 0);
         if(err < 0){
-            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_PROJ failed to write Audiz_PResult_Head.");
+            LOG4CPLUS_ERROR(g_logger, "procModlReceived while processing AZOP_QUERY_PROJ failed to write Audiz_PResult_Head."<< OUTPUT_ERRNO);
             return false;
         }
         else{

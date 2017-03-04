@@ -27,14 +27,20 @@ namespace audiz{
 #define MYLOGD(x) LOG4CPLUS_DEBUG(g_logger, x);
 #endif
 #define OUTPUT_ERRNO " error: "<< strerror(errno)
-pthread_mutex_t g_SmpCmsLock = PTHREAD_MUTEX_INITIALIZER;
-set<SampleConsumer*> g_AllSmpConsumers;
+static pthread_mutex_t g_SmpCmsLock = PTHREAD_MUTEX_INITIALIZER;
+static set<SampleConsumer*> g_AllSmpConsumers;
+static unsigned g_SmpNum;
+static bool g_bStored =false;
+
 const char* g_SampleDir = "samples/";
 
 void addSmpConsumer(SampleConsumer* cmr)
 {
     pthread_mutex_lock(&g_SmpCmsLock);
     g_AllSmpConsumers.insert(cmr);
+    if(g_bStored){
+        cmr->feedAll();
+    }
     pthread_mutex_unlock(&g_SmpCmsLock);
 }
 
@@ -54,7 +60,6 @@ static bool removeFile(const char* dir, const char *file)
     }
     return true;
 }
-static unsigned g_SmpNum;
 /**
  * remove all samples.
  *
@@ -63,7 +68,10 @@ void initSampleLib()
 {
     unsigned num = procFilesInDir(g_SampleDir, removeFile);
     MYLOGI("initSampleLib have removed "<< num <<" samples.");
+    pthread_mutex_lock(&g_SmpCmsLock);
     g_SmpNum = 0;
+    g_bStored = false;
+    pthread_mutex_unlock(&g_SmpCmsLock);
 }
 
 bool storeSample(const char *head, char *data, unsigned len)
@@ -82,7 +90,9 @@ bool storeSample(const char *head, char *data, unsigned len)
     }
     fwrite(data, 1, len, fp);
     fclose(fp);
+    pthread_mutex_lock(&g_SmpCmsLock);
     g_SmpNum ++;
+    pthread_mutex_unlock(&g_SmpCmsLock);
     return true;
 }
 
@@ -94,14 +104,20 @@ bool storeSample(const char *head, char *data, unsigned len)
 void finishStore()
 {
     pthread_mutex_lock(&g_SmpCmsLock);
-    for(set<SampleConsumer*>::iterator it=g_AllSmpConsumers.begin(); it != g_AllSmpConsumers.end(); it++){
-        (*it)->feedAll();
+    if(!g_bStored){
+        for(set<SampleConsumer*>::iterator it=g_AllSmpConsumers.begin(); it != g_AllSmpConsumers.end(); it++){
+            (*it)->feedAll();
+        }
+        g_bStored = true;
     }
     pthread_mutex_unlock(&g_SmpCmsLock);
 }
 
 unsigned getSampleNum()
 {
+    pthread_mutex_lock(&g_SmpCmsLock);
+    unsigned ret = g_SmpNum;
+    pthread_mutex_unlock(&g_SmpCmsLock);
     return g_SmpNum;
 }
 

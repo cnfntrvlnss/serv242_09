@@ -45,9 +45,8 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
 /**
  * execute command synchronizely.
  *
- * the command commited to cfglink is pubulished in the shared space with cfglink,
- * and wait for result in shared space for result with cfglink.
- * attention: result should be freed manually.
+ * communicate with servtask thread, with two shared spaces respectively for task and result.
+ * note: result should be freed manually.
  */
  int SessionStruct::procExecCommonCfgCmd(std::vector<AZ_PckVec>& task, Audiz_PResult &result)
 {
@@ -58,8 +57,6 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
 
     cfgCmdTask.insert(cfgCmdTask.end(), task.begin(), task.end());
     cfgCmdResult.reset();
-    //BLOGT("the task is commited, then we notify the model thread to execute it.");
-    //pthread_kill(modlThreadId, SIGCONT);
     pthread_mutex_lock(&modlFdLock);
     int fd = modlFd;
     pthread_mutex_unlock(&modlFdLock);
@@ -68,7 +65,6 @@ static char g_csWorkDir[MAX_PATH] = "ioacases/";
         writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
         if(err < 0){
             BLOGE("SessionStruct::procExecCommon error write cmd to cfg link. error: %s.", strerror(errno));
-            //closeModlLink();
         }
         else{
             while(cfgCmdResult.head.type == 0){
@@ -133,8 +129,9 @@ bool SessionStruct::prochandleDataResp(int fd)
     }
     return bret;
 }
+
 /**
- *
+ * recv result, recv response for commonCfgCmd.
  *
  */
 bool SessionStruct::prochandleResp(int fd)
@@ -148,9 +145,7 @@ bool SessionStruct::prochandleResp(int fd)
     if(cfgCmdTask.size() > 0){
         restype = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
     }
-    else{
-        pthread_mutex_unlock(&cfgCmdLock);
-    }
+
     bool bret = true;
     while(true){
         int err;
@@ -217,10 +212,11 @@ bool SessionStruct::prochandleResp(int fd)
         }
         closeModlLink(fd);
     }
+
+    pthread_mutex_unlock(&cfgCmdLock);
     if(restype != AZOP_INVALID_MARK){
         assert(azres.head.type == restype);    
         cfgCmdResult = azres;
-        pthread_mutex_unlock(&cfgCmdLock);
         pthread_cond_broadcast(&cfgCmdResultSetCond);
     }
 
@@ -352,6 +348,8 @@ int SessionStruct::checkModlFd(bool btry)
     return ret;
 }
 
+
+
 static void emptysighandler(int signo)
 {
     fprintf(stderr, "signal %d catched.\n", signo);
@@ -359,9 +357,10 @@ static void emptysighandler(int signo)
 
 /**
  * invoked immediately after establishing modl link.
+ * send all sample sequentially, finally send a end mark msg and wait for ack.
  *
  */
-static bool SendToServerAllSmps(SpkMdlStVec *vec, int fd)
+static bool sendToServerAllSmps(SpkMdlStVec *vec, int fd, unsigned &acculen)
 {
     bool bret = true;
     vector<AZ_PckVec> pcks;
@@ -369,7 +368,7 @@ static bool SendToServerAllSmps(SpkMdlStVec *vec, int fd)
     req.type = AZOP_ADD_SAMPLE;
     SpkMdlStVec::iterator *it = vec->iter();
     int err;
-    unsigned acculen = 0;
+    acculen = 0;
     for(SpkMdlSt* mdl= it->next(); mdl != NULL; mdl= it->next()){
         pcks.clear();
         req.addLen = 1;
@@ -378,40 +377,65 @@ static bool SendToServerAllSmps(SpkMdlStVec *vec, int fd)
         writen(fd, reinterpret_cast<PckVec*>(&pcks[0]),pcks.size(), &err, 0);
         if(err < 0){
             BLOGE("SendToServerAllSmps error occurs while writing mdl. idx=%u name=%s error=%s.", acculen, mdl->head, strerror(errno));
-            bret = false;
-            break;
+            return false;
         }
         acculen ++;
     }
-    if(bret == false){
+    return true;
+}
+
+bool SessionStruct::feedAllSamples_inner()
+{
+    unsigned acculen;
+    if(!sendToServerAllSmps(this->retMdlsAddr, this->modlFd, acculen)){
         return false;
     }
 
+    Audiz_PRequest_Head req;
+    req.type = AZOP_ADD_SAMPLE;
+    vector<AZ_PckVec> pcks;
     req.addLen = 0;
-    pcks.clear();
     req.pack_w(pcks);
-    writen(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    int err;
+    writen(this->modlFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
-        BLOGE("SendToServerAllSmps error occures while writing msg of finishing adding. error=%s.", strerror(errno));
+        BLOGE("feedAllSamples_inner error occures while writing msg of finishing adding. error=%s.", strerror(errno));
         return false;
     }
     Audiz_PResult res;
     res.reset();
     pcks.clear();
     res.head.pack_r(pcks);
-    readn(fd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
+    readn(this->modlFd, reinterpret_cast<PckVec*>(&pcks[0]), pcks.size(), &err, 0);
     if(err < 0){
-        BLOGE("SendToServerAllSmps error occures while reading response of msg of finishing adding. error=%s.", strerror(errno));
+        BLOGE("feedAllSamples_inner error occures while reading response of msg of finishing adding. error=%s.", strerror(errno));
         return false;
     }
     if(res.head.type != AZOP_ADD_SAMPLE + 1){
-        BLOGE("SendToServerAllSmps read unrecognized response while wait for response of msg of finishing adding.");
+        BLOGE("feedAllSamples_inner read unrecognized response while wait for response of msg of finishing adding.");
         return false;
     }
     if(res.head.ack != acculen){
-        BLOGW("SendToServerAllSmps the num of received samples in server in not consistent of that send by client.");
+        BLOGW("feedAllSamples_inner the num of received samples in server in not consistent of that send by client.");
     }
     return true;
+}
+
+void SessionStruct::feedAllSamples()
+{
+    setHasSamples();
+    unsigned acculen;
+    if(!sendToServerAllSmps(this->retMdlsAddr, this->modlFd, acculen)){
+        return;
+    }
+    Audiz_PRequest_Head req;
+    req.type = AZOP_ADD_SAMPLE;
+    req.addLen = 0;
+    vector<AZ_PckVec> pcks;
+    req.pack_w(pcks);
+    Audiz_PResult res;
+    procExecCommonCfgCmd(pcks, res);
+
 }
 /**
  * 
@@ -455,7 +479,7 @@ void* maintainSession_ex(void* param)
                 continue;
             }
             else{
-                if(!SendToServerAllSmps(pss->retMdlsAddr, curmodlfd)){
+                if(pss->getHasSamples() && !pss->feedAllSamples_inner()){
                     pss->closeModlLink(curmodlfd);
                     continue;
                 }
@@ -533,12 +557,14 @@ SessionStruct::SessionStruct(const char* servPath, AUDIZ_REPORTRESULTPROC resFun
     dataFd = -1;
     pthread_mutex_init(&modlFdLock, NULL);
     pthread_mutex_init(&dataFdLock, NULL);
+    isRunning = true;
     pthread_mutex_init(&isRunLock, NULL);
     pthread_mutex_init(&cfgCmdLock, NULL);
     pthread_cond_init(&cfgCmdResultSetCond, NULL);
     pthread_cond_init(&cfgCmdTaskEmptyCond, NULL);
-    isRunning = true;
     bConnected = false;
+    bHasSamples = false;
+    pthread_mutex_init(&hasSamplesLock, NULL);
     int readp = pthread_create(&modlThreadId, NULL, maintainSession_ex, this);
     if(readp < 0){
         BLOGE("SessionStruct::SessionStruct failed to create thread maintainSession.\n");
@@ -555,6 +581,7 @@ SessionStruct::~SessionStruct()
     pthread_mutex_destroy(&isRunLock);
     pthread_mutex_destroy(&dataFdLock);
     pthread_mutex_destroy(&modlFdLock);
+    pthread_mutex_destroy(&hasSamplesLock);
 }
 
 
@@ -622,9 +649,10 @@ bool SessionStruct::writeSample(const char *name, char *buf, unsigned len)
     for(unsigned idx = st; idx < pcks.size(); idx++){
         req.addLen += pcks[idx].len;
     }
-    BLOGI("sessionstruct::writesample start sending sample to server. name=%s.", name);
+    BLOGT("sessionstruct::writeSample start procExecCommonCfgCmd in server. name: ", name);
     Audiz_PResult res;
     procExecCommonCfgCmd(pcks, res);
+    BLOGT("sessionstruct::writeSample result from procExecCommonCfgCmd %d.", res.head.ack);
     return true;
 }
 
@@ -659,8 +687,9 @@ unsigned SessionStruct::queryUnfinishedProjNum()
     vector<AZ_PckVec> pcks;
     req.pack_w(pcks);
     Audiz_PResult res;
-    BLOGI("sessionstruct::queryprojnum start execute common cfgcmd in server.");
+    BLOGT("sessionstruct::queryprojnum start procExecCommonCfgCmd in server.");
     procExecCommonCfgCmd(pcks, res);
+    BLOGT("sessionstruct::queryprojnum result from procExecCommonCfgCmd %d.", res.head.ack);
     assert(res.argBuf == NULL);
     if(res.head.ack >= 0){
         return res.head.ack;
@@ -671,41 +700,3 @@ unsigned SessionStruct::queryUnfinishedProjNum()
     }
 }
 
-/**
- * deprecated.
- * send one cfgcmd to server, wait the response matching to the cfgcmd.
- *
- */
- /*
- int SessionStruct::procSendCfgCmd()
-{
-    //TODO add serialized commands having no response.
-    
-    //TODO make sure commiting command only once.
-    bool bCfgCmdSend  = false;
-    pthread_mutex_lock(&cfgCmdLock);
-    if(cfgCmdTask.size() == 0 || bCfgCmdSend){
-        pthread_mutex_unlock(&cfgCmdLock);
-        return 0;
-    }
-    int err;
-    //vector<AZ_PckVec> vecResult;
-    //Audiz_PResult_Head_OnWire::serialize(cfgCmdResult.head, vecResult);
-    pthread_mutex_lock(&modlFdLock);
-    int fd = modlFd;
-    pthread_mutex_unlock(&modlFdLock);
-    writen(fd, reinterpret_cast<PckVec*>(&cfgCmdTask[0]), cfgCmdTask.size(), &err, 0);
-    if(err < 0){
-        BLOGE("procSendCfgCmd error write cmd to cfg link. error: %s.", strerror(errno));
-        cfgCmdResult.head.type = CHARS_AS_INIT32(const_cast<char*>(cfgCmdTask[0].base)) + 1;
-        cfgCmdResult.head.ack = -1;
-        //closeModlLink();
-    }
-    else{
-        bCfgCmdSend = true;
-    }
-    pthread_mutex_unlock(&cfgCmdLock);
-    if(err < 0) pthread_cond_broadcast(&cfgCmdResultSetCond);
-    return 0;
-}
-*/
